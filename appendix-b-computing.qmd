@@ -1,0 +1,337 @@
+# Computing Environment {#sec-computing}
+
+This appendix describes the software environment needed to reproduce every example and experiment in the book. We cover the Python ecosystem, GPU setup, the `gbc` companion package, dataset preparation, and chapter-by-chapter reproduction instructions. If something breaks, check the troubleshooting section at the end.
+
+## Python Environment {#sec-comp-python}
+
+All code in this book uses *Python 3.10 or later* with PyTorch as the primary numerical framework. We recommend creating an isolated virtual environment to avoid dependency conflicts.
+
+**Using `venv`.**
+
+```bash
+python3 -m venv gbc-env
+source gbc-env/bin/activate   # Linux / macOS
+# gbc-env\Scripts\activate    # Windows
+pip install --upgrade pip
+```
+
+**Using Conda.**
+
+```bash
+conda create -n gbc python=3.12 -y
+conda activate gbc
+```
+
+The full dependency list is declared in `pyproject.toml`:
+
+| Package | Minimum version | Purpose |
+|---------|-----------------|---------|
+| `torch` | 2.0 | Neural network training, GPU acceleration |
+| `numpy` | 2.0 | Array operations^[NumPy 2.0+ is required; `np.trapz` was removed in NumPy 2.0 and replaced by `np.trapezoid`. The `gbc` package uses `np.trapezoid` throughout.] |
+| `scipy` | 1.10 | Statistical distributions, optimization |
+| `scikit-learn` | 1.2 | Data splitting, preprocessing, Gaussian processes |
+| `matplotlib` | 3.7 | Plotting |
+| `pandas` | 2.0 | Tabular data loading |
+
+: Core dependencies for the `gbc` package. {#tbl-deps tbl-colwidths="[25,20,55]"}
+
+Install all dependencies at once by installing the `gbc` package in development mode (see @sec-comp-gbc below).
+
+
+## PyTorch and GPU Setup {#sec-comp-gpu}
+
+GBC models train comfortably on a CPU for the pedagogical examples in Chapters [-@sec-quantiles] through [-@sec-iqn] (each runs in under a minute). For the larger experiments in Chapters [-@sec-surrogates] through [-@sec-active-learning], a GPU reduces wall-clock time from minutes to seconds.
+
+**CUDA (NVIDIA GPUs).** Install the CUDA-enabled build of PyTorch following the instructions at [pytorch.org/get-started](https://pytorch.org/get-started/locally/). The exact command depends on your CUDA toolkit version. For CUDA 12.1:
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+```
+
+For CUDA 12.4 (common on newer distributions and HPC nodes running the latest driver):
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu124
+```
+
+Verify that CUDA is available:
+
+```python
+import torch
+print(torch.cuda.is_available())       # True
+print(torch.cuda.get_device_name(0))   # e.g. "NVIDIA A100-SXM4-80GB"
+```
+
+A common source of confusion is a mismatch between the CUDA toolkit version compiled into PyTorch and the driver version installed on the host. The PyTorch CUDA runtime is self-contained, so you do not need a system-wide CUDA installation --- but the NVIDIA driver must be new enough to support the CUDA version. Run `nvidia-smi` at the command line to see the maximum CUDA version your driver supports, and make sure it is at least as high as the version in the `pip install` URL. If `torch.cuda.is_available()` returns `False` despite having an NVIDIA GPU, this version mismatch is the most likely culprit.
+
+To move a model and its data to the GPU, use the `.to()` method on both:
+
+```python
+device = torch.device("cuda")
+model = IQN(xdim=1).to(device)
+X_t = torch.tensor(X, dtype=torch.float32).to(device)
+```
+
+Most `gbc` training functions accept a `device` argument, so in practice we simply pass `device=get_device()` and the library handles placement automatically. The exception is `train_iqn`, which runs on CPU only; use `train_het_mlp` or `train_het_ensemble` for GPU-accelerated training.
+
+**Apple Silicon (MPS).** On macOS with an M-series chip, PyTorch 2.0+ supports the Metal Performance Shaders (MPS) backend:
+
+```python
+import torch
+print(torch.backends.mps.is_available())  # True on M1/M2/M3/M4
+device = torch.device("mps")
+```
+
+MPS provides roughly 3--5$\times$ speedup over CPU for the network sizes used in this book. All `gbc` code works on MPS without modification.
+
+**CPU fallback.** If no GPU is available, every example still runs --- it just takes longer. The `gbc.utils.get_device()` helper selects the best available backend automatically:
+
+```python
+from gbc.utils import get_device
+device = get_device()  # cuda > mps > cpu
+```
+
+**Reproducibility across devices.** Neural network training is not bitwise reproducible across devices (CPU vs. CUDA vs. MPS) because floating-point operations are reordered for performance. We fix random seeds via `gbc.utils.set_seed()` to make results reproducible *on the same device*. The numerical conclusions --- CRPS, RMSE, coverage --- are stable across platforms to within the reported standard errors.
+
+
+## The `gbc` Package {#sec-comp-gbc}
+
+The book ships with a companion Python package called `gbc`. Every code listing in the chapters imports from this package rather than re-implementing algorithms from scratch. This keeps the chapter code focused on *using* the methods rather than defining them.
+
+Clone the book repository and install in editable mode:
+
+```bash
+git clone https://github.com/polson-sokolov/gbc-book.git
+cd gbc-book
+pip install -e ".[dev]"
+```
+
+The `-e` (editable) flag means that changes to the source files in `gbc/` take effect immediately without reinstalling.
+
+The package is organized into the following modules:
+
+| Module | Purpose | Key exports |
+|--------|---------|-------------|
+| `gbc.iqn` | Implicit Quantile Network | `IQN`, `train_iqn`, `sample_iqn` |
+| `gbc.loss` | Loss functions | `pinball_loss`, `composite_loss` |
+| `gbc.ensemble` | Heteroscedastic MLP ensemble | `HetMLP` |
+| `gbc.conformal` | Conformal calibration | `temporal_cv_quantiles` |
+| `gbc.augment` | Boundary-augmented IQN | `em_labels`, `BoundaryClassifier`, `augment_features` |
+| `gbc.active_learning` | Randomized-prior acquisition | `RandomPriorNet`, `ensemble_disagreement` |
+| `gbc.causal` | Causal inference (CATE/ATE) | `CausalIQN` |
+| `gbc.metrics` | Evaluation metrics | `crps_samples`, `coverage`, `pi_width` |
+| `gbc.data` | Dataset loaders | `load_motorcycle`, `friedman1` |
+| `gbc.plotting` | Visualization | `quantile_fan`, `calibration_plot` |
+| `gbc.utils` | Seeding, device, scheduling | `set_seed`, `get_device`, `cosine_schedule` |
+
+: Modules in the `gbc` package. {#tbl-modules}
+
+### Module API Reference {#sec-comp-api}
+
+We provide a concise reference for the most important functions and classes in each module. Full docstrings are available via Python's `help()` built-in.
+
+**`gbc.iqn`** --- the core of the book. `IQN(xdim, hdim=256, nh=32)` constructs the implicit quantile network with cosine tau-embedding. The `forward(x, tau)` method takes `x`, an `(n, xdim)` input tensor, and `tau`, a scalar float in (0, 1); pass different `tau` values to get different quantile predictions. It returns an `(n, 2)` tensor whose columns are the conditional mean and the quantile estimate at level `tau`. `train_iqn(X, y, epochs=3000, hdim=256, nh=32, lr=1e-3, wd=1e-4, seed=42, w=(0.3, 0.3, 0.4))` handles full-batch Adam training with cosine annealing and returns a five-tuple `(model, xm, xs, ym, ys)` containing the trained model alongside the normalization statistics needed at test time. `sample_iqn(model, X_te, xm, xs, ym, ys, B=500)` sweeps 500 evenly-spaced quantile levels through the trained network and returns a `(B, n_test)` array of draws from the learned predictive distribution.
+
+**`gbc.loss`** --- three loss functions. `pinball_loss(y, y_hat, tau)` computes the standard check loss $\rho_\tau(y - \hat{y})$. `composite_loss(y, f, tau, w)` combines an L1 anchor on the conditional mean, a monotonicity regularizer, and the pinball term with weights `w`. `gaussian_nll(mu, logvar, y)` provides the heteroscedastic Gaussian negative log-likelihood used by the `HetMLP` ensemble.
+
+**`gbc.ensemble`** --- the het-MLP ensemble from Chapter [-@sec-calibration]. `HetMLP(xdim, hdim=256, nlayers=3)` is a standard MLP with two output heads: one for the predicted mean and one for the log-variance. `train_het_mlp(X: torch.Tensor, y: torch.Tensor, epochs=5000, hdim=256, nlayers=3, lr=1e-3, batch_size=8192, seed=42, device=None)` trains a single member with mini-batch SGD. Note: `X` must be a PyTorch tensor (use `torch.tensor(X_np, dtype=torch.float32)` to convert from NumPy). `ensemble_predict(models, X)` aggregates predictions from a list of trained members using the law of total variance and returns `(ens_mean, ens_std)` arrays.
+
+**`gbc.augment`** --- the Aug-IQN pipeline from Chapter [-@sec-jumps]. `em_labels(y, n_components=2, seed=42)` clusters the response into regimes via a Gaussian mixture model. `BoundaryClassifier(xdim, hdim=256, nlayers=3)` and its companion `train_classifier(X, labels, ...)` learn a regime probability from the covariates. `augment_features(X, classifier)` appends the predicted regime probability as a `(d+1)`-th feature column, which is then passed to a standard IQN.
+
+**`gbc.active_learning`** --- the randomized-prior ensemble from Chapter [-@sec-active-learning]. `RandomPriorNet(xdim, hdim=128, nlayers=3, prior_scale=1.0)` adds a frozen random network to a trainable network following Osband et al. (2018). `ensemble_disagreement(models, X)` returns the pointwise standard deviation across ensemble members. `select_next(models, X_candidates, batch_size=1)` picks the candidates with highest disagreement.
+
+**`gbc.causal`** --- the causal IQN from Chapter [-@sec-causal]. `CausalIQN(xdim=1, hsz=32, nh=32)` has four sub-modules: a propensity network, a baseline-outcome network, a treatment-effect network, and a cosine tau-embedding. The `.fit(x, y, z, epochs=3000, ...)` method trains with a composite loss that includes a binary cross-entropy term on the propensity score. `.estimate_cate(x, z, n_mc=500)` returns the median CATE and a full `(n, n_mc)` array of treatment-effect samples.
+
+**`gbc.conformal`** --- conformal prediction intervals from Chapter [-@sec-calibration]. `temporal_cv_quantiles(residuals, strata, alpha=0.90, min_count=20)` computes per-stratum quantiles from out-of-fold absolute residuals. `conformal_pi(y_hat, strata, quantile_map)` constructs symmetric prediction intervals centered on the point forecast.
+
+**`gbc.metrics`** --- we use five metrics throughout the book. `crps_samples(y, samples)` computes the energy-score estimator of the CRPS from a `(B, n)` array of predictive draws. `crps_gaussian(y, mu, sigma)` uses the closed-form expression for Gaussian forecasts. `coverage(y, samples, alpha=0.90)` and `pi_width(samples, alpha=0.90)` report empirical coverage and average interval width, respectively. `rmse(y, y_hat)` and `rmspe(y, y_hat)` round out the suite with point-forecast accuracy.
+
+**`gbc.data`** --- dataset loaders. `load_motorcycle()` returns the 133-row MASS::mcycle dataset as `(X, y)`. `friedman1(X)` evaluates the Friedman \#1 function. `jump_fn(x)` provides a 1D jump test function. `make_bimodal(n, n_obs, theta_true, seed)` generates the bimodal posterior ABC benchmark. `lhs_1d(n, lo, hi, seed)` produces a stratified 1D sample.
+
+**`gbc.plotting`** --- two workhorse plotting functions. `quantile_fan(x, samples, ...)` draws nested shaded prediction bands at multiple coverage levels with optional overlays for the true function and training data. `calibration_plot(y, samples, ...)` produces a PIT histogram that reveals whether the predictive distribution is calibrated. `set_theme()` applies the book's standard figure style to all subsequent Matplotlib plots.
+
+**`gbc.utils`** --- three small helpers. `set_seed(seed=42)` sets seeds for PyTorch, NumPy, and CUDA. `get_device()` returns the best available `torch.device` (CUDA > MPS > CPU). `cosine_schedule(optimizer, T_max, eta_min_ratio=0.01)` wraps PyTorch's `CosineAnnealingLR` scheduler.
+
+A minimal example that trains an IQN on the motorcycle data:
+
+```python
+#| eval: false
+from gbc import IQN, train_iqn, sample_iqn
+from gbc.data import load_motorcycle
+from gbc.utils import set_seed, get_device
+
+set_seed(42)
+X, y = load_motorcycle()
+model, xm, xs, ym, ys = train_iqn(X, y, epochs=2000, lr=1e-3)
+samples = sample_iqn(model, X, xm, xs, ym, ys, B=200)
+```
+
+
+## Datasets {#sec-comp-data}
+
+Several datasets used in the book are small enough to be embedded directly in `gbc.data` (motorcycle, Friedman). Others must be downloaded. The table below lists every dataset, where it appears, and how to obtain it.
+
+| Dataset | Ch. | Size | Source |
+|---------|-----|------|--------|
+| Motorcycle | [-@sec-quantiles], [-@sec-surrogates] | 133 rows | `gbc.data.load_motorcycle()` |
+| Friedman-1 | [-@sec-surrogates] | Synthetic | `gbc.data.friedman1()` |
+| Phantom | [-@sec-jumps] | 9,000 rows | `jumpgp` R pkg^[`bitbucket.org/gramacylab/jumpgp`] |
+| Star | [-@sec-jumps] | 9,000 rows | `jumpgp` R pkg |
+| AMHV | [-@sec-jumps] | 8,500 rows | `jumpgp` R pkg |
+| Michalewicz | [-@sec-jumps] | 90,000 rows | `jumpgp` R pkg |
+| Rocket (LGBB) | [-@sec-active-learning] | 3D, adaptive | NASA LGBB^[`bobby.gramacy.com/surrogates`] |
+| Lake temperature | [-@sec-calibration] | 281,764 rows | @holthuijzen2025synthesizing |
+| LaLonde | [-@sec-causal] | 614 rows | `lalonde` R pkg or UCI |
+| Satellite (GRACE) | [-@sec-active-learning] | 7D, adaptive | @sauer2023active |
+
+: Datasets used in the book, their chapters, and sources. {#tbl-datasets tbl-colwidths="[18,18,16,48]"}
+
+For the `jumpgp` datasets (Phantom, Star, AMHV, Michalewicz), export the data from R to CSV:
+
+```r
+# In R:
+library(jumpgp)
+data(phantom); write.csv(phantom, "phantom.csv", row.names = FALSE)
+data(star);    write.csv(star, "star.csv", row.names = FALSE)
+```
+
+Place all downloaded CSV files in a `data/` directory at the root of the book repository. The chapter scripts expect paths of the form `data/phantom.csv`.
+
+
+## Reproducing Results {#sec-comp-reproduce}
+
+Every chapter in Parts II and III includes both pedagogical examples (which execute during the Quarto render) and full-scale experiments (which use cached results). Here we describe how to reproduce the cached results from scratch.
+
+The pedagogical examples in Chapters 3--5 --- 1D quantile regression, noise outsourcing demonstrations, and small IQN fits --- all run with `eval: true` during the Quarto render. No separate scripts are needed.
+
+**Chapter 7: GBC surrogates.** Train the IQN surrogate on benchmark functions (BGP, Friedman) and compare to GP baselines:
+
+```bash
+#| eval: false
+python scripts/ch07_surrogates.py --dataset bgp --reps 50
+python scripts/ch07_surrogates.py --dataset friedman --reps 50
+```
+
+Results are saved to `cache/ch07_*.pt`. Expected runtime: roughly 10 minutes on a GPU, 30 minutes on CPU.
+
+**Chapter 8: Jump discontinuities.** The Aug-IQN pipeline for Phantom and Star:
+
+```bash
+#| eval: false
+python scripts/ch08_jumps.py --dataset phantom --reps 10
+python scripts/ch08_jumps.py --dataset star --reps 10
+```
+
+Expected results: Phantom RMSE $\approx$ 0.044, CRPS $\approx$ 0.009; Star RMSE $\approx$ 0.059, CRPS $\approx$ 0.013.
+
+**Chapter 9: Active learning.** Run the randomized-prior acquisition loop:
+
+```bash
+#| eval: false
+python scripts/ch09_active_learning.py --dataset rocket --n0 50 --budget 250 --reps 30
+```
+
+Expected: GBC RMSE $\approx$ 0.007 vs. DGP baseline RMSE $\approx$ 0.021 (roughly $3\times$ improvement).
+
+**Chapter 14: Calibration (lake temperature).** Train the het-MLP ensemble with temporal cross-validation conformal calibration:
+
+```bash
+#| eval: false
+python scripts/ch14_lake.py --epochs 5000 --cv-folds 5
+```
+
+Expected: RMSE $\approx$ 1.22, coverage $\approx$ 90%, PI width $\approx$ 3.8.
+
+Once all cached results are in place, render the full book with:
+
+```bash
+quarto render
+```
+
+The rendered HTML appears in `_book/`. For PDF output:
+
+```bash
+quarto render --to pdf
+```
+
+### Reproducing on a SLURM Cluster {#sec-comp-slurm}
+
+The full experiment suite --- especially the 30-replicate active learning runs and the 280k-row lake dataset --- benefits from a SLURM-based HPC cluster with GPU nodes. We developed the book on the Hopper cluster at George Mason University, but any SLURM environment with NVIDIA GPUs will work.
+
+Start by creating a Conda environment on the cluster's shared filesystem so that all compute nodes see the same installation. Log into the head node and run:
+
+```bash
+module load anaconda3
+conda create -n gbc python=3.12 -y
+conda activate gbc
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+cd /path/to/gbc-book
+pip install -e ".[dev]"
+```
+
+We organize the training runs as a SLURM job array. Each array task trains one experimental configuration (dataset--replicate pair) on a single GPU. A template SLURM script looks like:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=gbc-train
+#SBATCH --partition=gpuq
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
+#SBATCH --time=02:00:00
+#SBATCH --array=0-49
+#SBATCH --output=logs/gbc_%A_%a.out
+
+module load anaconda3
+conda activate gbc
+
+python scripts/ch07_surrogates.py --dataset bgp --rep $SLURM_ARRAY_TASK_ID
+```
+
+Save this as `slurm/train_ch07.sh` and submit with `sbatch slurm/train_ch07.sh`. The `--array=0-49` flag launches 50 tasks, one per replicate. Each task writes its results to `cache/ch07_bgp_rep{REP}.pt`. Repeat for Chapters 8, 9, and 14 with analogous scripts.
+
+After all jobs finish, collect the per-replicate files into a single summary. We provide a helper script that aggregates `.pt` files into the combined cache files that the chapter code expects:
+
+```bash
+python scripts/aggregate_cache.py --chapter 7
+python scripts/aggregate_cache.py --chapter 8
+python scripts/aggregate_cache.py --chapter 9
+python scripts/aggregate_cache.py --chapter 14
+```
+
+Finally, render the book on the head node (or your local machine after copying the `cache/` directory):
+
+```bash
+quarto render --to html
+```
+
+The Quarto render itself does not need a GPU. It only reads the cached `.pt` files and produces static HTML pages with embedded figures. A full render takes roughly five minutes on a modern laptop.
+
+
+## Troubleshooting {#sec-comp-trouble}
+
+*`np.trapz` not found.*
+NumPy 2.0+ removed `np.trapz`. Use `np.trapezoid` instead. The `gbc` package handles this automatically, but if you encounter this error in your own code, update the function name.
+
+*PyTorch out of memory on GPU.*
+Reduce batch size or use gradient accumulation. For the IQN, a batch size of 512 fits comfortably on a 4 GB GPU. If training the het-MLP ensemble on the lake dataset (280k rows), 8 GB of VRAM is recommended. On SLURM clusters, request a larger GPU partition (e.g., `--gres=gpu:A100:1`) if the default allocation is too small. You can also monitor memory usage in real time with `nvidia-smi` or `torch.cuda.memory_summary()` to identify which tensors consume the most VRAM.
+
+*CUDA version mismatch.*
+If `torch.cuda.is_available()` returns `False` on a machine that has an NVIDIA GPU, the driver is likely too old for the CUDA runtime compiled into your PyTorch build. Run `nvidia-smi` to check the maximum supported CUDA version. Then reinstall PyTorch with a matching `--index-url` (e.g., `cu118` instead of `cu121`). On shared clusters, the driver version is set by the sysadmin --- contact them if it is out of date.
+
+*MPS backend errors on macOS.*
+Some PyTorch operations are not yet implemented on MPS. If you encounter `NotImplementedError`, fall back to CPU by setting:
+
+```python
+import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+```
+
+*Quarto render hangs on a chapter.*
+Chapters with `eval: true` code blocks execute during render. If a chapter appears to hang, it is likely training a model. Check `execute: cache: true` is set in `_quarto.yml` (it is by default) so that re-renders skip already-computed cells.
+
+*Results differ slightly from the book.*
+Floating-point non-determinism across hardware is expected. Results should match to within reported standard errors. For exact reproduction, use the same GPU type (NVIDIA A100) and PyTorch version listed in the book's `requirements.txt`.
+
+*`bibtex` errors during PDF render.*
+The bibliography file is `references.bib`. Quarto handles citation processing automatically. If you see undefined citation warnings, ensure you have run `quarto render` (not `pdflatex` directly).

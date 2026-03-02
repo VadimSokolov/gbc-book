@@ -1,0 +1,774 @@
+# Motivating Datasets {#sec-datasets}
+
+> "*The purpose of computing is insight, not numbers.*" --- Richard Hamming
+
+Every method needs a proving ground, and this chapter introduces the datasets and test functions that serve as running examples throughout the book. Each appears in at least one later chapter, and several appear in multiple chapters to illustrate how different GBC tools handle the same data. We present them here in one place so that later chapters can focus on methodology rather than data description.
+
+The datasets span a wide range of statistical challenges that a practitioner encounters in modern computational science. We have organized them roughly by the type of challenge they present, progressing from basic heteroscedasticity through jump discontinuities, high dimensionality, active learning, likelihood-free inference, and causal estimation.
+
+Some are simple univariate time series with heteroscedastic noise, like the motorcycle crash data that has been a benchmark for nonparametric regression since the 1980s. Others feature abrupt discontinuities --- the Phantom, Star, and AMHV datasets were designed specifically to expose the failure of stationary surrogate models on jump-process response surfaces, where the response function is smooth within each regime but jumps abruptly at the boundary between regimes. Still others push the dimensionality and sample-size envelope: the Friedman function in ten dimensions tests whether a surrogate can ignore irrelevant inputs and capture nonlinear interactions, while the Michalewicz function at $n = 90{,}000$ training points takes us into the regime where cubic-cost Gaussian processes are simply infeasible.
+
+We also include datasets drawn from real engineering and scientific applications, where the challenges are not artificially constructed but arise naturally from the physics and statistics of the problem. The Rocket LGBB benchmark captures the aerodynamic ridge at the sound barrier, a genuinely non-stationary feature that GP kernels systematically oversmooth. The Satellite GRACE problem embeds a stochastic Monte Carlo simulator for atmospheric drag in seven dimensions, requiring both a surrogate model and an active learning strategy to efficiently explore the input space. The lake temperature dataset from Falling Creek Reservoir reveals what happens when signal-to-noise ratios are so high that quantile regression architectures collapse --- an honest failure case that motivates the calibration remedies developed later in the book. The Ebola agent-based model produces multimodal epidemic trajectories from a simulator with no tractable likelihood, making it a canonical example for likelihood-free inference. And the LaLonde wage data anchors our causal inference chapter with a randomized experiment whose true treatment effect is known, providing ground truth that is exceedingly rare in the causal inference literature.
+
+Together, these datasets test every aspect of the GBC framework: heteroscedasticity, jump discontinuities, high dimensionality, scalability, active learning, Bayesian inference, and causal estimation. We have chosen them to be representative of the problems that a practitioner building surrogate models or performing simulation-based inference will encounter. Some are synthetic (allowing us to know the truth and compute exact metrics), some come from real scientific applications (grounding the methodology in genuine data challenges), and some involve expensive simulators (motivating the active learning and Bayesian computation methods that are the core of this book).
+
+A recurring theme across these datasets is the tension between GP-based methods and neural-network-based methods. GPs provide calibrated uncertainty from small samples and work beautifully when their smoothness assumptions match the data. GBC provides scalability, flexibility, and the ability to handle non-Gaussian predictive distributions. No single method dominates across all settings, and understanding *when* to use each approach is as important as understanding *how* each approach works. The datasets in this chapter are specifically chosen to span the boundary between GP-favorable and GBC-favorable regimes.
+
+@tbl-datasets-overview provides a summary. The "Chapter" column indicates where each dataset is first analyzed in depth.
+
+| Dataset | $d$ | $n$ | Type | Challenge | Chapter |
+|:--------|----:|----:|:-----|:----------|:--------|
+| Motorcycle | 1 | 133 | Real | Heteroscedastic noise | @sec-iqn |
+| Phantom | 2 | 9k | Synthetic | Sinusoidal jump boundary | @sec-jumps |
+| Star | 2 | 9k | Synthetic | Star-shaped jump boundary | @sec-jumps |
+| AMHV | 4 | 8.5k | Simulator | Smooth regime transition | @sec-jumps |
+| BGP (2D--4D) | 2--4 | 2k | Synthetic (GP) | Piecewise-continuous | @sec-surrogates |
+| Friedman 10D | 10 | 2k--20k | Synthetic | Inert variables, interactions | @sec-surrogates |
+| Michalewicz 4D | 4 | 90k | Synthetic | Large $n$, MJGP infeasible | @sec-jumps |
+| 2D Exponential | 2 | 100 | Synthetic | Smooth, small $n$ | @sec-active-learning |
+| Rocket LGBB | 3 | 300 | Simulator | Sound-barrier ridge | @sec-active-learning |
+| Satellite GRACE | 7 | 500 | Simulator | Smooth, high $d$ | @sec-active-learning |
+| Lake Temperature | 6 | 282k | Real | High SNR, temporal | @sec-calibration |
+| Ebola ABM | 5 | 300 | Simulator | Bimodal, no likelihood | @sec-bayesian-inference |
+| LaLonde | 8 | 445 | Real | Causal inference | @sec-causal |
+
+: Datasets used throughout this book. Dimension $d$ is the number of input features; $n$ is the typical sample size used in our experiments. {#tbl-datasets-overview tbl-colwidths="[20,5,8,14,30,23]"}
+
+
+We begin with the simplest dataset and progressively introduce more complex challenges.
+
+
+## Motorcycle Crash Data {#sec-data-motorcycle}
+
+The *motorcycle crash dataset* [@silverman1985some] records head acceleration (in $g$) versus time (in milliseconds) for $n = 133$ simulated motorcycle crashes. It is distributed as `mcycle` in the R package `MASS` and has become the canonical benchmark for heteroscedastic regression. The experiment was designed to study the biomechanics of head injury during a frontal impact: a crash-test dummy wearing a helmet strikes a rigid surface at a controlled velocity, and an accelerometer mounted on the dummy's head records the deceleration profile. The scientific interest lies in characterizing the severity of the impact --- both the peak deceleration and the duration of the crash event --- which determines whether the helmet provides adequate protection.
+
+What makes the motorcycle data a challenging statistical problem is that the noise structure changes fundamentally across the input range. Before the impact, the head is essentially stationary and the measurements are quiet. During the crash event, the violent deceleration introduces large variability: different crash replicates produce different peak accelerations depending on slight variations in impact angle, helmet fit, and surface contact. After the rebound, the variance decreases again as the head returns to rest. This three-phase structure means that any model assuming constant variance --- whether a Gaussian process with a homoscedastic nugget or a simple linear regression --- will produce prediction intervals that are too wide in the quiet phases and dangerously narrow during the crash.
+
+::: {.callout-note}
+## Dataset summary
+- *Source*: @silverman1985some; available in R's `MASS::mcycle`
+- *Size*: $n = 133$ observations, $d = 1$ input (time after impact)
+- *Response*: Head acceleration ($g$)
+- *Key feature*: Variance changes dramatically across the input range
+- *Used in*: @sec-iqn-motorcycle (IQN quantile fan), @sec-surrogates (GBC vs. hetGP)
+:::
+
+The response has three distinct phases, each with a characteristic noise level that makes this dataset a textbook example of heteroscedasticity.
+
+In the *pre-impact* phase ($t < 15$ ms), the acceleration is near zero with small variance (standard deviation approximately $2$--$3\,g$). The head has not yet contacted the surface, and the small fluctuations reflect sensor noise and minor vibrations from the crash-test apparatus.
+
+During the *crash event* ($15 < t < 35$ ms), the head decelerates violently through the helmet's foam liner, producing large negative accelerations with peaks reaching $-120\,g$ or more. The variance in this phase is enormous (standard deviation approximately $40$--$50\,g$), reflecting genuine variation in crash severity across replicates: the peak deceleration depends sensitively on the exact point and angle of contact between the head and the rigid surface.
+
+In the *recovery* phase ($t > 35$ ms), the acceleration returns toward zero as the head rebounds, and the variance decreases to an intermediate level. Some replicates show secondary oscillations as the head bounces within the helmet.
+
+This three-phase structure makes the motorcycle data a natural test case for uncertainty quantification methods. A model that assumes constant variance will produce prediction intervals that are too wide before impact (wasting coverage probability on a region where the data is quiet) and too narrow during the crash (failing to capture the full range of plausible outcomes where it matters most). The consequences of this miscalibration are not merely statistical: in a helmet design application, overly narrow intervals during the crash event could lead to an underestimate of the probability of a severe injury.
+
+The IQN handles this natively: because the quantile function $Q_\tau(Y \mid t)$ is learned as a function of both the time $t$ and the quantile level $\tau$, the network automatically widens its quantile bands where the data is noisy and tightens them where the data is quiet (@sec-iqn-motorcycle). No explicit model of the variance function is needed. By contrast, the purpose-built heteroscedastic GP (`hetGP`) of @binois2018practical models the log-variance as a separate GP, requiring two linked GPs --- one for the mean function and one for the log-variance --- to achieve what the IQN captures with a single architecture.
+
+On this benchmark, both methods achieve comparable CRPS ($\approx 12.5$), but the motorcycle data has only 133 observations --- a regime where GPs are at their best. The real advantage of GBC emerges on larger, higher-dimensional problems.
+
+```{python}
+#| eval: true
+#| code-fold: true
+#| fig-cap: "Motorcycle crash data: head acceleration versus time after impact. The shaded region highlights the high-variance crash event. The variance changes by roughly two orders of magnitude across the input range."
+#| label: fig-data-motorcycle
+import numpy as np
+import matplotlib.pyplot as plt
+
+from gbc.data import load_motorcycle
+
+X_moto, y_moto = load_motorcycle()
+t = X_moto.ravel()
+
+fig, ax = plt.subplots(1, 1, figsize=(7, 3.5))
+ax.scatter(t, y_moto, s=12, alpha=0.6, color='k', zorder=3)
+ax.axvspan(15, 35, alpha=0.08, color='red', label='High-variance region')
+ax.set_xlabel("Time after impact (ms)")
+ax.set_ylabel("Head acceleration ($g$)")
+ax.set_title("Motorcycle crash data (Silverman, 1985)")
+ax.legend(fontsize=8)
+plt.tight_layout()
+plt.show()
+```
+
+The motorcycle data also serves a useful pedagogical role: it is small enough that all code blocks execute in seconds (making it ideal for `eval: true` demonstrations), and the heteroscedasticity is dramatic enough to be visible in a simple scatter plot. We will use it as our first hands-on example when we introduce the IQN architecture in @sec-iqn.
+
+We revisit this dataset in @sec-iqn-motorcycle, where we train an IQN and visualize the quantile fan, and in @sec-surrogates, where we compare GBC against the heteroscedastic GP (`hetGP`) of @binois2018practical. The comparison is informative because `hetGP` is the purpose-built tool for exactly this problem type, and matching its performance with a general-purpose IQN demonstrates that GBC's flexibility does not come at the cost of accuracy on well-studied problems.
+
+
+## Flowers Test Functions {#sec-data-flowers}
+
+The Flowers benchmark suite [@flowers2026modular] consists of four synthetic datasets designed to test surrogate methods on response surfaces with *jump discontinuities*. Jump discontinuities arise whenever a physical system undergoes a regime change: a material fractures rather than bending, an epidemic tips from containment to exponential growth, or a semiconductor fabrication line reaches capacity saturation. In each case, the response surface is smooth within each regime but jumps abruptly at the boundary between regimes. Standard surrogate methods, which assume a globally smooth response, face a fundamental dilemma at these boundaries: they must either oversmooth the jump (introducing bias) or undersmooth the response within each regime (introducing variance).
+
+The Flowers suite isolates this challenge in controlled settings where the true boundary geometry is known exactly, allowing us to disentangle boundary-detection errors from within-regime prediction errors. When a surrogate method produces poor predictions near a jump boundary, we want to know whether the failure is in the boundary detection (the method cannot identify where the jump occurs) or in the within-regime modeling (the method cannot fit the response within each regime). By knowing the true boundary, we can diagnose which component is responsible.
+
+The suite was introduced alongside the Modular Jump GP (MJGP) method [@flowers2026modular], which detects regimes via EM clustering of the marginal responses, trains a classifier to predict regime membership, and fits a GP within each regime. This three-stage pipeline --- cluster, classify, fit --- is a natural strategy for piecewise response surfaces, and MJGP represents the current state of the art in GP-based jump modeling. Our GBC-Aug method follows the same decomposition (cluster, classify, fit) but replaces the GP backend with an IQN, achieving comparable or better accuracy at a fraction of the computational cost. The IQN's $\mathcal{O}(n)$ training scales to datasets where the GP's $\mathcal{O}(n^3)$ cost is prohibitive. We use three of the Flowers datasets --- Phantom, Star, and AMHV --- plus the Michalewicz function, throughout @sec-jumps.
+
+### Phantom Function {#sec-data-phantom}
+
+The Phantom function is the flagship benchmark of the Flowers suite and the primary test case for boundary-augmented GBC.
+
+The Phantom function is a bivariate response surface ($d = 2$, $N = 10{,}201$) with a *sinusoidal jump boundary*. The response jumps across the curve $\sin(x_1) = x_2$: points above the sine curve belong to one regime and points below to another. Each regime generates the response from a different Gaussian component, producing a bimodal marginal distribution with a sharp level shift across the boundary. The name "Phantom" comes from the function's resemblance to a CT scan phantom --- a calibration object with known discontinuities used to test imaging algorithms. Just as a CT reconstruction algorithm must faithfully reproduce sharp edges in the phantom without ringing or blurring, a surrogate model must capture the jump boundary without smearing the response. The analogy is apt: both problems involve recovering a function with sharp discontinuities from noisy observations, and in both cases the fundamental challenge is that smoothing methods (whether Fourier filtering in CT or kernel regression in surrogate modeling) inherently trade off resolution at edges against noise suppression in smooth regions.
+
+The sinusoidal boundary is specifically designed to be challenging for a broad range of methods. Axis-aligned partitions fail because tree-based methods cannot approximate a sine curve with axis-aligned splits --- any recursive binary partition of the input space will produce a staircase approximation that converges slowly to the true curve. Linear classifiers also fail: an SVC with a linear kernel achieves only 82% accuracy on this boundary, because no hyperplane in $(x_1, x_2)$-space can separate the two sinusoidal regimes. Perhaps most insidiously, local neighborhoods are misleading: points that are close in Euclidean distance may be on opposite sides of the oscillating boundary, so $k$-nearest-neighbors methods and local GP fits face systematic boundary contamination.
+
+The difficulty is not merely in *predicting* the response within each regime --- a simple GP could handle that --- but in *learning the boundary geometry* accurately enough that predictions near the boundary are assigned to the correct regime. A test point that lies just above the sine curve should receive a prediction from the upper regime, while a point just below should receive a prediction from the lower regime. Getting this wrong at even a thin strip near the boundary produces large errors in both the conditional mean and the predictive interval placement. On the Phantom benchmark, GBC-Aug matches MJGP on CRPS (0.009 vs. 0.010) while improving RMSE by 17% (0.044 vs. 0.053), with a total training time of approximately 23 seconds per replicate on GPU compared to over 600 seconds for MJGP on CPU.
+
+::: {.callout-note}
+## Dataset summary
+- *Source*: @flowers2026modular
+- *Size*: $N = 10{,}201$ on a grid; $n_{\text{train}} \approx 9{,}000$ after 90/10 split
+- *Dimension*: $d = 2$
+- *Response*: Bimodal (two Gaussian components separated by jump)
+- *Boundary*: $\sin(x_1) = x_2$ (sinusoidal)
+- *Used in*: @sec-jumps-phantom (Aug-IQN benchmark)
+:::
+
+```{python}
+#| eval: true
+#| code-fold: true
+#| fig-cap: "Phantom function: the response jumps across the sinusoidal boundary $\\sin(x_1) = x_2$. Left: response surface colored by value. Right: the bimodal marginal distribution of the response."
+#| label: fig-data-phantom
+import numpy as np
+import matplotlib.pyplot as plt
+
+np.random.seed(42)
+n = 5000
+x1 = np.random.uniform(-3, 3, n)
+x2 = np.random.uniform(-3, 3, n)
+
+# Regime assignment: above or below sin(x1)
+regime = (x2 > np.sin(x1)).astype(int)
+
+# Response: different Gaussian components per regime
+y = np.where(regime == 0,
+             np.random.normal(2.0, 0.5, n),
+             np.random.normal(8.0, 0.5, n))
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+
+# Left: scatter colored by response
+sc = ax1.scatter(x1, x2, c=y, s=2, alpha=0.5, cmap='RdYlBu_r', rasterized=True)
+xg = np.linspace(-3, 3, 200)
+ax1.plot(xg, np.sin(xg), 'k--', linewidth=1.5, label=r'$\sin(x_1) = x_2$')
+ax1.set_xlabel("$x_1$")
+ax1.set_ylabel("$x_2$")
+ax1.set_title("Phantom: response surface")
+ax1.legend(fontsize=8, loc='upper right')
+plt.colorbar(sc, ax=ax1, label='Response')
+
+# Right: marginal histogram
+ax2.hist(y[regime == 0], bins=40, alpha=0.6, color='steelblue',
+         label='Regime 0', density=True)
+ax2.hist(y[regime == 1], bins=40, alpha=0.6, color='coral',
+         label='Regime 1', density=True)
+ax2.set_xlabel("Response $y$")
+ax2.set_ylabel("Density")
+ax2.set_title("Phantom: bimodal marginal")
+ax2.legend(fontsize=8)
+
+plt.tight_layout()
+plt.show()
+```
+
+### Star Function {#sec-data-star}
+
+The Star function represents a harder version of the boundary-detection problem, with angular geometry that tests the limits of smooth classifiers.
+
+The Star function ($d = 2$, $N = 10{,}201$) replaces the smooth sinusoidal boundary with an angular, *star-shaped partition*. In polar coordinates centered at the origin, the boundary radius oscillates between an inner and outer value with five-fold symmetry, creating a star shape whose tips alternate between reaching far from the origin and tucking close to it. Every point in the interior regime is geographically close to the exterior regime, making boundary detection harder than Phantom.
+
+The star boundary poses a distinct geometric challenge compared to the sinusoidal Phantom. The Phantom boundary is smooth everywhere --- it has bounded curvature and a continuous tangent vector --- so a sufficiently flexible classifier can approximate it well with enough hidden units. The star boundary, by contrast, has sharp corners at each of the five tips where the boundary direction changes abruptly. At these corners, the two regimes nearly touch, and the local curvature diverges. A classifier that achieves high accuracy on the smooth segments between the tips may still make errors at the tips themselves, where the decision boundary must turn through a large angle.
+
+The boundary length relative to the domain area is also substantially larger than for Phantom, because the star's indentations create a longer, more tortuous interface. A back-of-the-envelope calculation shows that the star boundary in a $[-1.5, 1.5]^2$ domain is roughly 60% longer than the Phantom boundary in a $[-3, 3]^2$ domain, relative to the domain diameter. For neighborhood-based methods, this means that a larger fraction of the training points lie in the "contamination zone" near the boundary where local averaging mixes the two regimes.
+
+::: {.callout-note}
+## Dataset summary
+- *Source*: @flowers2026modular
+- *Size*: $N = 10{,}201$; $n_{\text{train}} \approx 9{,}000$ after 90/10 split
+- *Dimension*: $d = 2$
+- *Response*: Bimodal (same structure as Phantom)
+- *Boundary*: Star-shaped polygon with sharp corners
+- *Used in*: @sec-jumps-star (Aug-IQN benchmark)
+:::
+
+Despite these difficulties, the MLP classifier in the Aug-IQN pipeline achieves over 99% accuracy on Star. The key insight is that a nonlinear classifier with sufficiently many hidden units can learn the angular geometry from data, even though no single hidden unit aligns with the star boundary. The ReLU activations create piecewise-linear decision boundaries that, in combination, approximate the star's angular contour. Appending the learned regime probability to the IQN input allows the quantile network to condition on which side of the boundary a test point lies, effectively partitioning the prediction problem into two separate within-regime tasks.
+
+On this benchmark, GBC-Aug achieves CRPS = 0.013, outperforming MJGP's 0.024 by 46% --- the largest improvement in our jump-boundary comparisons. The improvement comes from two sources: the MLP classifier learns a more accurate boundary representation than MJGP's EM-based clustering, and the IQN backend adapts its quantile bands locally rather than fitting a global GP within each regime. We analyze the Star benchmark in detail in @sec-jumps-star.
+
+```{python}
+#| eval: true
+#| code-fold: true
+#| fig-cap: "Star function: the response jumps across a star-shaped boundary. Points inside the star belong to one regime; points outside belong to another."
+#| label: fig-data-star
+import numpy as np
+import matplotlib.pyplot as plt
+
+np.random.seed(42)
+n = 5000
+x1 = np.random.uniform(-1.5, 1.5, n)
+x2 = np.random.uniform(-1.5, 1.5, n)
+
+# Star boundary in polar coordinates
+theta = np.arctan2(x2, x1)
+r = np.sqrt(x1**2 + x2**2)
+# Star: radius oscillates between 0.4 and 1.0 with 5 points
+r_star = 0.4 + 0.6 * (0.5 + 0.5 * np.cos(5 * theta))
+regime = (r < r_star).astype(int)
+
+y = np.where(regime == 1,
+             np.random.normal(7.0, 0.5, n),
+             np.random.normal(2.0, 0.5, n))
+
+fig, ax = plt.subplots(1, 1, figsize=(5.5, 5))
+sc = ax.scatter(x1, x2, c=y, s=2, alpha=0.5, cmap='RdYlBu_r', rasterized=True)
+# Draw approximate star boundary
+theta_plot = np.linspace(-np.pi, np.pi, 500)
+r_plot = 0.4 + 0.6 * (0.5 + 0.5 * np.cos(5 * theta_plot))
+ax.plot(r_plot * np.cos(theta_plot), r_plot * np.sin(theta_plot),
+        'k--', linewidth=1.5, label='Star boundary')
+ax.set_xlabel("$x_1$")
+ax.set_ylabel("$x_2$")
+ax.set_title("Star: response surface")
+ax.legend(fontsize=8)
+ax.set_aspect('equal')
+plt.colorbar(sc, ax=ax, label='Response', shrink=0.8)
+plt.tight_layout()
+plt.show()
+```
+
+### AMHV Function {#sec-data-amhv}
+
+The AMHV dataset is the Flowers suite's control case: a dataset where the "jump" is really a smooth transition, and methods designed for sharp boundaries should not be penalized for applying unnecessary machinery.
+
+The AMHV (Automated Material Handling Vehicle) transport dataset [@kang2024bayesian] records average transport time (seconds) for autonomous vehicles in a semiconductor wafer fabrication facility. In a modern fab, hundreds of autonomous vehicles carry wafer cassettes between processing stations along a network of overhead rails. The logistics of this system are surprisingly complex: vehicles must navigate a shared rail network, avoid collisions, decide which empty vehicle should respond to each pickup request, and manage acceleration and deceleration at curves and intersections. The four input parameters --- vehicle speed, acceleration profile, minimum inter-vehicle safety distance, and empty-vehicle search range --- are controllable logistics parameters that plant engineers tune to maximize throughput. The response, average transport time, is the primary metric for fab productivity: even a few seconds of improvement per transport, multiplied across thousands of daily moves, translates into significant capacity gains.
+
+::: {.callout-note}
+## Dataset summary
+- *Source*: @kang2024bayesian
+- *Size*: $N = 9{,}503$, $d = 4$
+- *Inputs*: Vehicle speed, acceleration, minimum inter-vehicle distance, empty-vehicle search range
+- *Response*: Average transport time (seconds)
+- *Key feature*: Smooth regime transition (NOT a sharp binary jump)
+- *Used in*: @sec-jumps-amhv (plain GBC vs. MJGP)
+:::
+
+Unlike Phantom and Star, the AMHV response distribution is *not cleanly bimodal*. At low vehicle speeds and large safety distances, the system operates well below capacity and transport times are predictable. But as speed increases and safety margins tighten, the system approaches a congestion threshold where vehicles begin to queue at intersections and loading stations, causing transport times to spike. The physics of this transition is analogous to traffic flow on a highway: below a critical density, vehicles move freely; above it, queuing effects cascade through the network and transit times increase nonlinearly.
+
+This transition is gradual rather than sharp: there is no clean boundary in the four-dimensional input space where the system flips from "uncongested" to "congested." The two regimes overlap in the marginal distribution, so EM clustering cannot reliably separate them. If we histogram the response, we see a single skewed distribution rather than the clean bimodal shape of Phantom or Star. This makes AMHV the natural control case: it shows when augmentation is unnecessary and plain GBC suffices. On this benchmark, GBC without any boundary augmentation achieves CRPS = 0.011 with 91% coverage, slightly outperforming the MJGP's 0.012 --- demonstrating that the jump-detection overhead in MJGP can actually hurt when the boundary is smooth rather than sharp. The lesson is that not every piecewise response requires boundary augmentation, and the diagnostic we recommend (inspecting the marginal distribution for bimodality) correctly identifies AMHV as a case where plain GBC is preferable.
+
+### Michalewicz Function {#sec-data-michalewicz}
+
+The final dataset in the Flowers suite is not from the original @flowers2026modular paper but is included in our benchmark suite to test GBC at scales where GP-based methods are infeasible.
+
+The Michalewicz function [@surjanovic2013virtual] is a standard optimization test function with steep ridges and valleys:
+$$
+f(x) = -\sum_{i=1}^{d} \sin(x_i) \sin^{2m}\!\left(\frac{i \, x_i^2}{\pi}\right), \quad x_i \in [0, \pi],
+$$ {#eq-michalewicz}
+where $m = 10$ controls the steepness of the ridges. The parameter $m$ determines how rapidly the function transitions between its flat plateaus and its narrow valleys: at $m = 10$, the ridges are extremely steep, with the function dropping from near-zero to its minimum value over a very narrow range of input values. The function was originally designed to test global optimization algorithms, because the steep ridges create narrow valleys that are easy to miss with coarse sampling --- an optimizer that does not land near the valley cannot detect its existence from nearby evaluations.
+
+In the Flowers benchmark suite, the Michalewicz function is modified by adding a $0.5$ offset to the flat region, introducing a jump manifold in four-dimensional input space. This modification means that most of the input domain produces a response near 0.5, while a small fraction of the domain (near the valleys) produces strongly negative responses. The marginal response is not bimodal in the Gaussian sense but rather a point mass near 0.5 mixed with a scattered distribution in $[-4, 0]$. This non-Gaussian mixture structure violates the assumptions of EM-based regime detection, making the Michalewicz benchmark a stress test for methods that rely on clustering to identify jump boundaries.
+
+::: {.callout-note}
+## Dataset summary
+- *Source*: @surjanovic2013virtual (Virtual Library of Simulation Experiments)
+- *Size*: $N = 100{,}000$ (Latin hypercube sample), $d = 4$
+- *Key feature*: Large $n$ makes MJGP computationally infeasible ($\geq 48$ hours)
+- *Used in*: @sec-jumps (scalability demonstration)
+:::
+
+The Michalewicz function appears in @sec-jumps as a scalability test. With $n = 90{,}000$ training points, the $\mathcal{O}(n^3)$ cost of MJGP makes it infeasible --- the dense covariance matrix alone would require $90{,}000^2 \times 8$ bytes $\approx 65$ GB of memory, and the Cholesky factorization would take over 48 hours on our hardware. Even sparse or local GP approximations struggle at this scale, because the jump manifold is a complex hypersurface in four dimensions that cannot be captured by a small number of inducing points or local neighborhoods.
+
+GBC, by contrast, processes the data in mini-batches via stochastic gradient descent and trains in under 30 minutes on a single GPU, achieving CRPS = 0.031 with 91% coverage. The mini-batch approach means that GBC's memory footprint is constant regardless of the training set size --- it depends only on the batch size $B$ and the network width $w$, not on $n$. This benchmark makes a simple but important point: when the training set grows beyond a few thousand points, methods that scale as $\mathcal{O}(n)$ are not merely faster --- they are the only methods that are feasible at all. In the age of large simulation campaigns that can easily produce hundreds of thousands of evaluations, this scalability advantage is not a luxury but a necessity.
+
+
+## BGP Test Functions {#sec-data-bgp}
+
+The Flowers benchmarks described above use fixed, known boundary geometries. This is useful for understanding *how* a method handles jumps, but it does not tell us *how reliably* the method performs across different problem instances. The BGP test suite addresses this limitation by randomizing the boundary.
+
+The Bi-mixture Gaussian Process (BGP) test problems from @park2026active provide a controlled environment for testing surrogates on *piecewise-continuous* response surfaces. Unlike the Flowers benchmarks, where the boundary geometry is fixed, the BGP suite randomizes both the partition boundary and the GP realizations within each regime, allowing us to average over problem instances and obtain statistically meaningful comparisons. This isolation of the stationarity challenge is valuable because it separates the effect of boundary geometry from the effect of within-regime complexity.
+
+::: {.callout-note}
+## Dataset summary
+- *Source*: @park2026active
+- *Size*: $N = 2{,}000$ per realization, $d \in \{2, 3, 4\}$
+- *Response*: Piecewise-continuous (two GP realizations with different means)
+- *Partition*: Random hyperplane $a^\top x = 0$ with $a \in \{-1, +1\}^d$
+- *Used in*: @sec-surr-bgp (GBC vs. stationary GP)
+:::
+
+The BGP specification works as follows. The input domain is the unit hypercube $[-0.5, 0.5]^d$, which we sample uniformly to create training and test sets. A random hyperplane $a^\top x = 0$, with the direction vector $a$ drawn uniformly from $\{-1, +1\}^d$, partitions the domain into two regions $X_1 = \{x : a^\top x \geq 0\}$ and $X_2 = X \setminus X_1$. The restriction of $a$ to $\{-1, +1\}^d$ means the hyperplane is always "diagonal" --- it never aligns with any coordinate axis --- which prevents tree-based methods from exploiting axis-aligned splits. In each region, the response is drawn from an independent GP:
+$$
+f_1 \sim \mathcal{GP}(13,\; 9\, k_{\text{SE}}), \quad f_2 \sim \mathcal{GP}(0,\; 9\, k_{\text{SE}}),
+$$ {#eq-bgp-dgp}
+where $k_{\text{SE}}$ is the squared-exponential kernel with length scale $\ell = 0.1d$. The observed response is $y_i = f(x_i) + \varepsilon_i$ with $\varepsilon_i \sim \mathcal{N}(0, 4)$. The jump-to-noise ratio is $13/\sigma = 13/2 = 6.5$ (jump size divided by noise standard deviation $\sigma = 2$): large enough that the discontinuity is clearly visible, but the noise prevents trivial boundary detection.
+
+The difficulty for a stationary GP is fundamental: its single length-scale parameter must simultaneously smooth within each region (where the response is a smooth GP realization) and accommodate the sharp jump at the boundary. If the length scale is short, the GP captures the jump but overfits within each regime, producing noisy, oscillatory predictions far from the boundary. If the length scale is long, within-regime predictions are smooth but the jump is blurred, producing a gradual ramp where there should be a sharp step. There is no compromise that resolves both problems simultaneously, because the optimal smoothing behavior differs qualitatively at the boundary (where discontinuity must be preserved) and away from it (where smoothness should be enforced).
+
+This trade-off becomes increasingly severe as $d$ grows, because the hyperplane boundary cuts through a larger fraction of the input volume in high dimensions. In $d = 2$, the boundary is a line segment and most training points are well within one regime or the other. In $d = 4$, the boundary is a three-dimensional hyperplane, and a larger fraction of the training data lies near it. The GP must make its length-scale compromise for all these near-boundary points simultaneously. In our experiments, GBC's CRPS advantage over the stationary GP grows from 11% at $d = 2$ to 26% at $d = 4$, confirming that the GP's global length-scale estimate becomes progressively less effective as the problem dimension increases.
+
+```{python}
+#| eval: true
+#| code-fold: true
+#| fig-cap: "One realization of the BGP test function in $d = 2$. The dashed line shows the random partition boundary $a^\\top x = 0$. The two GP regimes have means 0 and 13, creating a visible jump."
+#| label: fig-data-bgp
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.linalg import cholesky
+
+np.random.seed(7)
+n = 800
+d = 2
+X = np.random.uniform(-0.5, 0.5, size=(n, d))
+
+# Random partition direction
+a = np.array([1.0, -1.0])
+region = (X @ a >= 0).astype(int)
+
+# Squared exponential kernel
+def se_kernel(X1, X2, sigma2=9.0, ls=0.2):
+    diff = X1[:, np.newaxis, :] - X2[np.newaxis, :, :]
+    sq_dist = np.sum(diff**2, axis=-1)
+    return sigma2 * np.exp(-sq_dist / (2.0 * ls**2))
+
+f = np.zeros(n)
+for idx_set, mean_val in [(region == 1, 13.0), (region == 0, 0.0)]:  # region 1 (a^T x >= 0) has mean 13, region 0 has mean 0
+    idx = np.where(idx_set)[0]
+    if len(idx) == 0:
+        continue
+    K = se_kernel(X[idx], X[idx]) + 1e-5 * np.eye(len(idx))
+    L = cholesky(K, lower=True)
+    f[idx] = L @ np.random.randn(len(idx)) + mean_val
+
+y = f + np.random.normal(0, 2, n)
+
+fig, ax = plt.subplots(1, 1, figsize=(5.5, 5))
+sc = ax.scatter(X[:, 0], X[:, 1], c=y, s=8, alpha=0.6, cmap='RdYlBu_r',
+                rasterized=True)
+# Draw partition boundary: a^T x = 0 => x1 - x2 = 0 => x2 = x1
+xb = np.linspace(-0.5, 0.5, 100)
+ax.plot(xb, xb, 'k--', linewidth=1.5, label=r'$a^\top x = 0$')
+ax.set_xlabel("$x_1$")
+ax.set_ylabel("$x_2$")
+ax.set_xlim(-0.55, 0.55)
+ax.set_ylim(-0.55, 0.55)
+ax.set_title("BGP realization ($d = 2$)")
+ax.legend(fontsize=8)
+ax.set_aspect('equal')
+plt.colorbar(sc, ax=ax, label='Response', shrink=0.8)
+plt.tight_layout()
+plt.show()
+```
+
+The randomized design of the BGP suite deserves emphasis. Because we generate 20 independent realizations per dimension --- each with a new random partition vector $a$ and fresh GP draws --- the reported metrics average over both estimation error and problem-instance variation. This is more informative than a single fixed benchmark, where a method might happen to perform well on one particular boundary orientation. The 20-replicate design gives us standard errors and lets us make statistically meaningful claims about which method is systematically better. Some realizations are harder than others (depending on whether the boundary cuts through a high-response region), and the replicate variance captures this difficulty variation.
+
+The BGP construction also has a pedagogical advantage: it creates the simplest possible piecewise response surface. Each regime is a smooth GP realization, and the partition is a hyperplane --- the simplest possible boundary. If a method fails on BGP, it will certainly fail on the more complex boundaries in Phantom and Star. If a method succeeds on BGP, we know that its basic machinery for handling discontinuities works, and we can then test it on harder boundary geometries.
+
+We test GBC against the stationary GP at dimensions $d \in \{2, 3, 4\}$ in @sec-surr-bgp, using 20 independent realizations per dimension. The results reveal a clear dimension-dependent pattern:
+
+| Dimension | GP CRPS | GBC CRPS | Improvement |
+|:---------:|:-------:|:--------:|:-----------:|
+| $d = 2$ | 1.379 | 1.224 | 11% |
+| $d = 3$ | 1.515 | 1.236 | 18% |
+| $d = 4$ | 1.716 | 1.267 | 26% |
+
+: GBC vs. stationary GP on the BGP benchmarks. CRPS values are means over 20 independent realizations. {#tbl-data-bgp-preview}
+
+The monotonically increasing advantage of GBC with dimension is consistent with the theoretical argument: as $d$ grows, the fraction of training points near the hyperplane boundary increases, and the GP's single global length scale becomes an increasingly poor compromise. This dimension-dependent pattern is one of the clearest empirical signals in the book, and it suggests that GBC's advantage over stationary GPs will continue to grow as problems scale to higher dimensions.
+
+Full results with standard errors, coverage metrics, and timing comparisons appear in @sec-surr-bgp.
+
+
+## Friedman 10D {#sec-data-friedman}
+
+The datasets considered so far have at most four input dimensions. We now turn to a benchmark that tests how surrogates handle the *curse of dimensionality* --- both in terms of the increased volume of the input space and in terms of the presence of irrelevant inputs that a good method should ignore.
+
+The Friedman function [@friedman1991multivariate] is a standard benchmark for high-dimensional regression:
+$$
+f(x) = 10\sin(\pi x_1 x_2) + 20(x_3 - 0.5)^2 + 10 x_4 + 5 x_5, \quad x \in [0,1]^{10}.
+$$ {#eq-friedman}
+
+::: {.callout-note}
+## Dataset summary
+- *Source*: @friedman1991multivariate
+- *Size*: $n \in \{500, \ldots, 20{,}000\}$ (varies by experiment), $d = 10$
+- *Active inputs*: Only $x_1, \ldots, x_5$; the remaining five are inert noise variables
+- *Key features*: Nonlinear interaction ($\sin(\pi x_1 x_2)$), quadratic and linear terms, inert variables
+- *Noise*: $\varepsilon \sim \mathcal{N}(0, 1)$
+- *Used in*: @sec-surr-friedman (GBC vs. GP), @sec-surr-scaling (scaling study)
+:::
+
+The Friedman function has been a mainstay of the machine learning and statistics benchmarking literature since its introduction in 1991, and for good reason: it packs several distinct challenges into a single compact test case. The function lives in a ten-dimensional hypercube, but its effective dimensionality is only five: the response depends on $x_1$ through $x_5$ and is completely independent of $x_6$ through $x_{10}$. A good surrogate must ignore these five inert inputs automatically rather than wasting model capacity estimating their (null) contribution.
+
+This is a form of implicit variable selection that kernel methods handle poorly. A standard GP with separable length scales must estimate a length-scale parameter for each of the ten dimensions, including the five that carry no information. The optimizer will try to set the inert length scales to infinity (indicating no dependence), but in finite samples the estimated length scales are noisy and may suggest spurious dependence on irrelevant inputs. A neural network, by contrast, can learn to ignore irrelevant inputs by setting the corresponding first-layer weights to zero --- a form of automatic relevance determination that emerges naturally from the optimization landscape.
+
+The function has several features that test a surrogate's capabilities beyond variable selection. The $\sin(\pi x_1 x_2)$ term creates a nonlinear interaction whose effective smoothness varies across the input space: near $x_1 x_2 = 0$, the sine function is nearly linear, while near $x_1 x_2 = 1$, it completes a full oscillation. This means the "correct" length scale for the GP kernel depends on the location in the input space --- a fundamentally non-stationary property that a standard stationary GP cannot capture without resorting to warping or local approximations.
+
+A GP with a product kernel $k(x_i, x_j) = \prod_{l=1}^{10} k_l(x_{il}, x_{jl})$ treats the interaction as a product of one-dimensional kernels and cannot represent the non-separable structure of $\sin(\pi x_1 x_2)$ --- the sine of a product is not a product of sines. Meanwhile, the quadratic ($x_3$) and linear ($x_4$, $x_5$) terms coexist with this interaction, producing a mix of nonlinearities that no single kernel can handle uniformly well: the optimal kernel for the sine interaction would be periodic, while the optimal kernel for the quadratic term would be polynomial, and the optimal kernel for the linear terms would be linear.
+
+The neural network in GBC faces none of these structural limitations. The feedforward architecture can represent products, sines, and polynomials through composition of its nonlinear activation functions, and the optimizer is free to allocate hidden units where the response is most complex. This architectural advantage is modest on the Friedman function (where the GP still achieves reasonable accuracy) but becomes decisive on more complex response surfaces.
+
+```{python}
+#| eval: true
+#| code-fold: true
+#| fig-cap: "Friedman function: response versus the two interacting inputs $x_1$ and $x_2$, with all other inputs at their midpoint. The sinusoidal interaction creates a complex surface that is difficult for separable GP kernels."
+#| label: fig-data-friedman
+import numpy as np
+import matplotlib.pyplot as plt
+from gbc.data import friedman1
+
+# Create a grid over x1, x2; fix other inputs at 0.5
+n_grid = 80
+x1g = np.linspace(0, 1, n_grid)
+x2g = np.linspace(0, 1, n_grid)
+X1, X2 = np.meshgrid(x1g, x2g)
+X_grid = np.column_stack([X1.ravel(), X2.ravel(),
+                          0.5 * np.ones(n_grid**2),
+                          0.5 * np.ones(n_grid**2),
+                          0.5 * np.ones(n_grid**2),
+                          0.5 * np.ones(n_grid**2),
+                          0.5 * np.ones(n_grid**2),
+                          0.5 * np.ones(n_grid**2),
+                          0.5 * np.ones(n_grid**2),
+                          0.5 * np.ones(n_grid**2)])
+Y_grid = friedman1(X_grid).reshape(n_grid, n_grid)
+
+fig, ax = plt.subplots(1, 1, figsize=(6, 5))
+cf = ax.contourf(X1, X2, Y_grid, levels=20, cmap='viridis')
+ax.set_xlabel("$x_1$")
+ax.set_ylabel("$x_2$")
+ax.set_title("Friedman function: $f(x_1, x_2, 0.5, 0.5, 0.5, 0, \\ldots, 0)$")
+plt.colorbar(cf, ax=ax, label='$f(x)$')
+plt.tight_layout()
+plt.show()
+```
+
+The Friedman function is used in @sec-surr-friedman to compare GBC and GP surrogates on smooth data, and in @sec-surr-scaling for the scaling study that pushes sample sizes from $n = 500$ to $n = 20{,}000$. Even on this GP-friendly benchmark, GBC achieves 12% lower RMSE and 14% lower CRPS, because the multiplicative interaction between $x_1$ and $x_2$ is difficult for separable kernel functions. A product kernel $k(x_i, x_j) = \prod_{l=1}^{d} k_l(x_{il}, x_{jl})$ cannot represent the cross-derivative structure of $\sin(\pi x_1 x_2)$, whereas a neural network with even a single hidden layer can approximate the product $x_1 x_2$ through its nonlinear activation functions and then compose this with a learned sinusoidal pattern.
+
+The scaling study is equally revealing: the GP becomes computationally infeasible beyond $n = 2{,}000$ on our hardware (the Cholesky factorization of a $2{,}000 \times 2{,}000$ matrix takes 47.6 seconds, and the cost grows cubically from there), while GBC continues to improve as $n$ grows, with training time scaling linearly. At $n = 20{,}000$, GBC achieves RMSE = 0.29, and there is no sign of diminishing returns --- more data continues to help, in contrast to GP surrogates that face an $\mathcal{O}(n^3)$ computational wall. This scaling advantage is not just a theoretical convenience but a practical necessity for the large simulation campaigns that are increasingly common in engineering and scientific computing.
+
+
+## 2D Exponential {#sec-data-2dexp}
+
+The next three datasets --- 2D Exponential, Rocket LGBB, and Satellite GRACE --- are all used in the active learning chapter (@sec-active-learning), where new training points are acquired sequentially based on where the surrogate is most uncertain. Active learning is the natural setting for expensive computer experiments: when each simulation run costs minutes or hours, we cannot afford to waste evaluations on uninformative input locations, and the surrogate model must guide the experimental design by identifying where additional data would reduce prediction uncertainty the most.
+
+These three benchmarks span a range of difficulties from GP-friendly (2D Exponential) to GP-hostile (Rocket) to a nuanced crossover (Satellite), and together they paint a complete picture of how GBC-based active learning compares to GP-based active learning across different response-surface geometries.
+
+The 2D Exponential function is the simplest benchmark from @sauer2023active:
+$$
+f(x_1, x_2) = 10 \, x_1 \exp(-x_1^2 - x_2^2), \quad (x_1, x_2) \in [-2, 2]^2,
+$$ {#eq-data-2d-exp}
+with additive Gaussian noise $\varepsilon \sim \mathcal{N}(0, 0.1^2)$.
+
+::: {.callout-note}
+## Dataset summary
+- *Source*: @sauer2023active
+- *Size*: $n_0 = 10$ initial points, growing to $n = 100$ via active learning
+- *Dimension*: $d = 2$
+- *Key feature*: Smooth, unimodal --- ideal for GP surrogates
+- *Used in*: @sec-al-2d (active learning benchmark where GP wins)
+:::
+
+This function is smooth, unimodal, and well-suited to a squared-exponential kernel. The surface has a single peak near $(x_1, x_2) = (0.7, 0)$ and decays exponentially in all directions --- exactly the kind of response that a GP with a radial basis function kernel was designed to model. The function's smoothness means that a GP's prior assumption of spatial correlation is perfectly calibrated: nearby points in the input space truly do have similar response values, and the kernel's length-scale parameter captures the rate of spatial decay accurately from very few observations.
+
+We include this benchmark deliberately as a control case for active learning: a setting where the GP's smoothness prior is perfectly matched to the target. On this benchmark, the GP-based DGP+ALC method achieves 21% lower RMSE than GBC-AL, quantifying the value of the GP prior in favorable conditions. This result is an honest assessment of GBC's limitations: when the true response surface is smooth, low-dimensional, and the sample size is small, a GP with the right kernel is hard to beat. The neural network in GBC must learn the smoothness structure from data alone, without the benefit of a kernel prior that encodes it from the start. With only $n = 100$ training points in two dimensions, the GP's inductive bias provides a substantial advantage. As we will see in the Rocket and Satellite benchmarks, this advantage diminishes and eventually reverses as the response surface becomes more complex or the dimensionality grows.
+
+```{python}
+#| eval: true
+#| code-fold: true
+#| fig-cap: "2D Exponential function: a smooth, unimodal surface where Gaussian process surrogates excel."
+#| label: fig-data-2dexp
+import numpy as np
+import matplotlib.pyplot as plt
+
+n_grid = 80
+x1g = np.linspace(-2, 2, n_grid)
+x2g = np.linspace(-2, 2, n_grid)
+X1, X2 = np.meshgrid(x1g, x2g)
+Y = 10 * X1 * np.exp(-X1**2 - X2**2)
+
+fig, ax = plt.subplots(1, 1, figsize=(6, 5))
+cf = ax.contourf(X1, X2, Y, levels=20, cmap='RdYlBu_r')
+ax.set_xlabel("$x_1$")
+ax.set_ylabel("$x_2$")
+ax.set_title("2D Exponential: $f(x_1, x_2) = 10 x_1 \\exp(-x_1^2 - x_2^2)$")
+plt.colorbar(cf, ax=ax, label='$f(x)$')
+plt.tight_layout()
+plt.show()
+```
+
+
+## Rocket Booster (LGBB) {#sec-data-rocket}
+
+The Rocket LGBB benchmark is the poster child for non-stationary response surfaces in the computer experiments literature.
+
+The Langley Glide-Back Booster (LGBB) benchmark [@pamadi2004aerodynamic; @gramacy2020surrogates; @sauer2023active] models the aerodynamics of a reusable NASA rocket booster gliding back to Earth after stage separation. The LGBB concept was developed at NASA Langley Research Center as part of a next-generation launch vehicle program: after separating from the orbiter at high altitude, the booster would deploy wings and glide back to the launch site for reuse, much like the current SpaceX booster recovery concept. This benchmark has become one of the standard test cases in the computer experiments literature, appearing in @gramacy2020surrogates as a motivating example for non-stationary surrogates and in @sauer2023active as an active learning benchmark for deep Gaussian processes.
+
+Accurate prediction of the aerodynamic coefficients during the glide-back phase is essential for trajectory planning and flight control. The booster descends through a wide range of Mach numbers (from hypersonic at separation to subsonic near landing), angles of attack (varying as the flight controller adjusts the trajectory), and side-slip angles (induced by crosswinds or attitude corrections). The aerodynamic simulator uses computational fluid dynamics (CFD) to compute six force and moment coefficients at each flight condition, and a single high-fidelity CFD evaluation can take hours on a computing cluster.
+
+A surrogate model must reproduce these coefficients accurately enough to support real-time trajectory optimization --- which requires evaluating the surrogate thousands of times per second, far faster than the original simulator can run. The active learning question is how to choose which flight conditions to simulate (at great expense) so that the surrogate achieves the best possible accuracy across the entire flight envelope.
+
+::: {.callout-note}
+## Dataset summary
+- *Source*: @pamadi2004aerodynamic (NASA); used in @gramacy2020surrogates and @sauer2023active
+- *Size*: $n_0 = 50$ initial points, growing to $n = 300$ via active learning
+- *Dimension*: $d = 3$ (Mach number, angle of attack, side-slip angle)
+- *Response*: Side-force coefficient
+- *Key feature*: Sharp nonlinear ridge at the sound barrier (Mach $\approx 1$)
+- *Used in*: @sec-al-rocket (active learning benchmark where GBC dominates)
+:::
+
+The three inputs are Mach number, angle of attack, and side-slip angle; the response is the side-force coefficient, one of six aerodynamic coefficients produced by the NASA aerodynamic simulator. What makes LGBB interesting is the *sound barrier*: at Mach $\approx 1$, the aerodynamic regime transitions from subsonic to supersonic, creating a sharp nonlinear ridge in the response surface. This ridge runs through the Mach--angle-of-attack plane and is not aligned with any coordinate axis. Physically, the transition occurs because shock waves form on the booster's surface as the airflow transitions from subsonic to supersonic, fundamentally changing the pressure distribution. The resulting aerodynamic coefficients exhibit a pronounced peak near Mach 1 that narrows to a thin ridge in the three-dimensional input space.
+
+A stationary GP with a squared-exponential kernel systematically oversmooths this ridge, because the kernel assigns positive correlation to points on opposite sides of the discontinuity. The GP must choose a length scale in the Mach direction that is either short enough to capture the ridge (at the cost of noisy predictions away from it) or long enough for smooth predictions elsewhere (at the cost of blurring the ridge). This is not a tuning problem that can be solved with a better kernel choice --- it is a fundamental limitation of any surrogate that assumes spatially uniform smoothness.
+
+In @sec-al-rocket, GBC-AL achieves $2.95\times$ lower RMSE than the GP-based DGP+ALC method --- the most dominant result in our active learning comparisons. This is not a marginal improvement: every single GBC replicate achieves lower RMSE than every single DGP replicate, with the 90% confidence bands separating completely by $n \approx 150$. The IQN's feedforward architecture adapts its effective resolution locally, allocating model capacity to the narrow region near Mach 1 where the response changes rapidly while maintaining smooth predictions in the subsonic and supersonic regimes.
+
+
+## Satellite GRACE {#sec-data-satellite}
+
+The Satellite GRACE benchmark represents the other end of the active learning spectrum from Rocket LGBB: a smooth, high-dimensional response surface where the GP's smoothness prior is an asset rather than a liability.
+
+The Satellite GRACE benchmark [@sun2019emulating; @mehta2014modeling; @sauer2023active] uses a Test Particle Monte Carlo (TPMC) simulator to compute drag coefficients for satellites in low-Earth orbit. Understanding satellite drag is critical for modern space operations. With the dramatic increase in satellite launches in recent years (including large constellations like Starlink), accurate drag prediction has become essential for space traffic management. Satellites orbiting below approximately 1,000 km altitude travel through the Earth's thermosphere, a rarefied region of the upper atmosphere where gas densities are low enough that individual molecular collisions dominate the aerodynamic interaction. Unlike the dense, continuum-flow regime experienced by aircraft, satellite aerodynamics operates in the *free molecular flow* regime, where the mean free path of gas molecules exceeds the satellite's characteristic dimension. In this regime, the drag force on the satellite depends on both the thermospheric conditions (gas composition, temperature, and bulk velocity) and the satellite's geometry and surface material properties. Accurately modeling this drag is essential for orbit determination, conjunction assessment (collision avoidance), satellite lifetime prediction, and atmospheric density estimation from satellite tracking data.
+
+::: {.callout-note}
+## Dataset summary
+- *Source*: @sun2019emulating; TPMC simulator for GRACE satellite
+- *Size*: $n_0 = 110$ initial points (including replicate pairs), growing to $n = 500$
+- *Dimension*: $d = 7$ (atmospheric composition, velocity, temperature variables)
+- *Response*: Satellite drag coefficient
+- *Key feature*: Smooth surface, stochastic simulator (~86 seconds per evaluation)
+- *Used in*: @sec-al-satellite (active learning crossover benchmark)
+:::
+
+The TPMC simulator works by launching thousands of virtual test particles at the satellite geometry and tracking their individual collisions with the satellite surface. Each particle represents a molecule of the thermospheric gas, and the gas-surface interaction model determines whether the molecule reflects specularly (like a billiard ball), diffusely (scattering in a random direction), or somewhere in between. The aggregate momentum transfer from all particle collisions yields the drag coefficient. Because each simulation involves tracking thousands of random particle trajectories, a single TPMC evaluation takes approximately 86 seconds and produces a stochastic output --- running the same inputs twice yields slightly different drag coefficients due to Monte Carlo sampling noise.
+
+The seven inputs describe the thermospheric conditions encountered by the GRACE satellite: the relative concentrations of atomic oxygen, molecular nitrogen, helium, and other species, along with the satellite's velocity relative to the co-rotating atmosphere and the gas temperature. The thermosphere is a highly variable environment --- solar activity drives order-of-magnitude changes in gas density on both solar-cycle (11-year) and daily timescales, which is why the drag coefficient must be modeled as a function of the instantaneous atmospheric state rather than precomputed as a single constant. The GRACE satellite, launched in 2002 as a joint NASA/DLR mission to measure the Earth's gravity field, orbits at approximately 500 km altitude where these thermospheric effects are significant.
+
+Unlike the Rocket LGBB, the drag coefficient surface is *smooth* --- there are no regime transitions or jump boundaries. The physics of gas-surface interactions varies continuously with the thermospheric inputs, and the TPMC simulator produces a response that is well-approximated by a GP with a moderate-smoothness kernel. This makes the GRACE benchmark a setting where the GP's smoothness prior is well-matched to the true response, and we expect the GP to eventually win given enough data.
+
+This dataset is important because it reveals a *crossover* in the active learning comparison: GBC-AL leads in the early acquisition phase ($n < 300$), achieving 16% lower RMSPE at $n = 200$, but the GP-based DGP+ALC overtakes GBC at larger sample sizes ($n = 500$), ultimately reaching RMSPE = 0.967 compared to GBC's 1.19. The smooth 7D surface is well-matched to the GP's kernel assumptions, and with enough data the GP exploits this inductive bias. The crossover tells a clear and practically useful story: at small sample sizes, the neural network's flexibility is an advantage because it can fit the response without committing to a specific kernel family; at larger sample sizes, the GP's smoothness prior provides effective regularization that the neural network lacks. This means the choice between GBC and GP for active learning depends on the total acquisition budget: for small budgets (common when the simulator is very expensive), GBC is preferred; for large budgets (possible when the simulator is moderately expensive), the GP may eventually catch up and surpass GBC on smooth surfaces.
+
+The crossover is discussed in detail in @sec-al-satellite. For practitioners with expensive simulators and limited computational budgets --- the most practically relevant regime --- GBC provides better accuracy during the critical early phase when each new simulation run matters most. Two supplementary proxy experiments confirm this pattern: SatMini (a reduced-budget version of the GRACE problem at $n = 60$) and a 7D Proxy function designed to mimic the satellite drag surface both show GBC outperforming DGP+ALC at small sample sizes.
+
+
+## Ebola Agent-Based Model {#sec-data-ebola}
+
+The datasets considered so far --- motorcycle, Flowers, BGP, Friedman, and the active learning benchmarks --- are all *surrogate modeling* problems where we observe input-output pairs $(x, y)$ and want to predict $y$ at new inputs. The Ebola ABM introduces a fundamentally different challenge: *Bayesian inference* for the parameters of a simulator that has no closed-form likelihood.
+
+The Ebola agent-based model (ABM) [@fadikar2018calibrating] simulates the spread of Ebola virus disease through a population, producing 56-week epidemic trajectories as output. This simulator was developed in the context of the RAPIDD Ebola Forecasting Challenge [@viboud2018rapidd], which asked modelers to predict the trajectory of simulated Ebola outbreaks using only early-phase data. The challenge was motivated by the 2014--2016 West African Ebola epidemic, the largest in history, which demonstrated the urgent need for quantitative forecasting tools that could guide public health response in real time.
+
+The ABM tracks individual agents (people) through disease states --- susceptible, exposed, infectious, hospitalized, recovered, or dead --- with stochastic transitions governed by five parameters that control the epidemiological dynamics. Each agent interacts with others in its local community, and the disease can spread between communities through travel. The model captures the spatial heterogeneity and stochastic variability of real epidemic dynamics in a way that compartmental ODE models (like the standard SIR model) cannot.
+
+The five input parameters and their roles are as follows. The first parameter, $\theta_1 \in [1.5, 2.0]$, controls the transmission rate, which determines how rapidly the disease spreads through contact between infectious and susceptible individuals --- it is closely related to the basic reproduction number $R_0$. The second, $\theta_2 \in [1, 20]$, specifies the initial number of infected individuals at the start of the outbreak, seeding the epidemic. The third parameter, $\theta_3 \in [2, 10]$, governs the delay (in days) before hospital intervention begins, representing the response time of the public health system. The fourth, $\theta_4 \in [0.1, 0.8]$, measures the efficacy of hospital intervention in reducing transmission once activated. The fifth, $\theta_5 \in [3 \times 10^{-5}, 8 \times 10^{-5}]$, controls the reduction in inter-community travel imposed during the outbreak. Together, these five parameters define the epidemiological scenario, and a single simulation run produces a cumulative count of infected individuals across 56 weeks.
+
+| Parameter | Description | Range |
+|-----------|-------------|-------|
+| $\theta_1$ | Transmission rate | $[1.5, 2.0]$ |
+| $\theta_2$ | Initial infected individuals | $[1, 20]$ |
+| $\theta_3$ | Delay in hospital intervention (days) | $[2, 10]$ |
+| $\theta_4$ | Efficacy of hospital intervention | $[0.1, 0.8]$ |
+| $\theta_5$ | Intervention reduction of travel | $[3 \times 10^{-5}, 8 \times 10^{-5}]$ |
+
+: Input parameters for the Ebola ABM. {#tbl-data-ebola-params}
+
+::: {.callout-note}
+## Dataset summary
+- *Source*: @fadikar2018calibrating; RAPIDD Ebola Forecasting Challenge [@viboud2018rapidd]
+- *Size*: 300 parameter scenarios, 100 replicates each, 56-week trajectories
+- *Dimension*: $d = 5$ input parameters
+- *Response*: 56-week cumulative incidence trajectory
+- *Key feature*: Bimodal output (epidemic vs. no epidemic), no tractable likelihood
+- *Used in*: @sec-bayesian-inference (posterior inference for simulator parameters)
+:::
+
+What makes the Ebola ABM particularly compelling as a test case for GBC is its *bimodal behavior*. For certain parameter settings, the epidemic takes off and produces a large outbreak with a characteristic S-shaped cumulative incidence curve. For nearby parameter settings, the epidemic sputters and dies out early, producing a flat trajectory near zero. This bimodality arises from the stochastic branching dynamics of disease transmission: when the effective reproduction number $R_t$ is near the critical threshold of 1, small random fluctuations in the early phase determine whether the epidemic establishes itself or collapses. If the first few transmission events happen to succeed, the epidemic enters a growth phase that feeds on itself; if they fail, the outbreak dies out before it can establish a chain of transmission. This is a classic example of a *tipping point* in a stochastic system, and it produces a bimodal output distribution that no Gaussian surrogate can represent faithfully.
+
+Some parameter settings produce strongly divergent replicates, with the same inputs yielding both explosive outbreaks and flat-lined trajectories across different random seeds. Others exhibit significant heteroscedasticity, with the variability of the epidemic trajectory depending strongly on the parameter values. High transmission rates ($\theta_1$ near 2.0) with many initial infected individuals ($\theta_2$ near 20) almost always produce large outbreaks, while low transmission rates with few initial cases almost always die out. The interesting --- and statistically challenging --- regime is the middle ground, where the outcome is genuinely uncertain and the posterior distribution over parameters given an observed trajectory is multimodal.
+
+This dataset connects directly to the Bayesian inference problem in @sec-bayesian-inference. Given an observed epidemic trajectory, we wish to infer the posterior distribution of the five epidemiological parameters. The challenge is that the ABM has no tractable likelihood: we can run the simulator forward to produce outbreak trajectories, but we cannot write down $p(y \mid \theta)$ in closed form. The stochastic, agent-level interactions that drive the model are far too complex for any analytical likelihood function. Each simulation run involves tracking thousands of individual agents through probabilistic state transitions, and the likelihood of observing a specific 56-week trajectory given the five input parameters would require marginalizing over the entire latent state history of every agent in the population. This is precisely the setting where GBC excels.
+
+We simulate a large training set of $(\theta, y)$ pairs by running the ABM at many parameter settings, train an IQN to learn the posterior quantile function, and at test time produce posterior samples for any observed trajectory via a single forward pass. The bimodal output distribution tests whether the IQN can represent multimodal posteriors --- a capability that single-mode variational methods and Gaussian-based surrogates would miss. The 56-dimensional output trajectory also requires effective summary statistics to condition on, since the IQN takes a finite-dimensional input vector rather than the full functional trajectory. Both challenges are addressed in @sec-bayesian-inference, where we show that GBC recovers credible posterior intervals for all five parameters, including in the bimodal regime where the epidemic's fate is most uncertain.
+
+
+## Lake Temperature {#sec-data-lake}
+
+The Ebola ABM illustrates a case where GBC excels because the likelihood is unavailable. The lake temperature dataset illustrates the opposite: a case where the IQN architecture *fails* and must be replaced by a different approach. Both lessons are important for the GBC practitioner, because understanding when a method fails is just as valuable as understanding when it succeeds. A good practitioner needs diagnostic tools to detect failure modes and alternative strategies to handle them.
+
+The *Falling Creek Reservoir* (FCR) lake temperature dataset [@holthuijzen2025synthesizing] consists of $N = 281{,}764$ records combining physics-based lake model outputs with observed water temperatures. Falling Creek Reservoir is a small (119 hectare-meter) drinking-water reservoir in southwestern Virginia, managed by the Western Virginia Water Authority. Accurate forecasting of water temperature at multiple depths is important for reservoir management because temperature drives thermal stratification --- the formation of distinct warm and cold layers separated by a thermocline. Stratification controls dissolved oxygen levels (which deplete in the cold bottom layer when it is isolated from atmospheric exchange), algal bloom dynamics (warm surface temperatures promote cyanobacterial growth), and ultimately the quality of water entering the treatment plant. Reservoir managers use temperature forecasts to decide when to activate aeration systems, at what depth to draw water, and whether to issue drinking-water advisories.
+
+The dataset spans several years of daily forecasts at multiple depths (0 to 9 meters at 1-meter intervals) and forecast horizons (1 to 30 days ahead), producing a total of $N = 281{,}764$ records. This large sample size, combined with the six informative input features, makes it an ideal benchmark for testing whether statistical post-processing methods can improve upon physics-based forecasts.
+
+::: {.callout-note}
+## Dataset summary
+- *Source*: @holthuijzen2025synthesizing; Falling Creek Reservoir, Virginia
+- *Size*: $N = 281{,}764$ ($n_{\text{train}} = 172{,}714$, $n_{\text{test}} = 109{,}050$)
+- *Dimension*: $d = 6$ input features
+- *Response*: Observed water temperature (${}^\circ$C)
+- *Key feature*: High signal-to-noise ratio causes IQN failure
+- *Train/test split*: Temporal (before / after 2022-06-11)
+- *Used in*: @sec-calibration (het-MLP ensemble + conformal calibration)
+:::
+
+The six input features combine temporal, spatial, and physics-based information:
+
+| Feature | Description | Range |
+|---------|-------------|-------|
+| DOY | Day of year | 1--365 |
+| Depth | Water depth (meters) | 0--9 m (1 m layers) |
+| Horizon | Forecast horizon (days ahead) | 1--30 |
+| $\phi$ | Lagged surface temperature (mean observed, previous 4 days) | $\approx 0$--$30\,{}^\circ$C |
+| $\mu_{\text{GLM}}$ | GLM ensemble mean at (DOY, Depth, Horizon) | $\approx 0$--$30\,{}^\circ$C |
+| $\sigma_{\text{GLM}}$ | GLM ensemble standard deviation | $\geq 0$ |
+
+: Input features for the lake temperature forecasting task. {#tbl-data-lake-features}
+
+The General Lake Model (GLM) is a one-dimensional hydrodynamic simulator that models the vertical temperature profile of a lake by solving energy-balance and mixing equations driven by meteorological forcing data. The NOAA/FLARE forecasting system runs an ensemble of GLM simulations with perturbed initial conditions and weather drivers, producing the ensemble mean $\mu_{\text{GLM}}$ and spread $\sigma_{\text{GLM}}$ that serve as inputs to our statistical model. The statistical model's job is to refine these physics-based predictions --- correcting systematic biases in the GLM and providing calibrated uncertainty that accounts for both model error and irreducible observation noise. Following @holthuijzen2025synthesizing, we train on all dates before 2022-06-11 and evaluate on the remainder, preserving strict temporal separation. This temporal split is essential: a random train/test split would allow the model to exploit autocorrelation between nearby dates, producing overly optimistic error estimates that would not reflect true forecasting performance.
+
+The lake temperature data has *high signal-to-noise ratio*: the physics-based simulator already captures most of the variance, and the residual standard deviation is a small fraction of the total response range. The GLM ensemble mean alone correlates strongly with the observed temperature, leaving the statistical model to learn only the residual correction. To put this in concrete terms, the total range of water temperatures is approximately $0$--$30\,{}^\circ$C, while the residual after removing the GLM prediction has a standard deviation of only about $1$--$2\,{}^\circ$C. This means the "signal" that the IQN must learn (the conditional mean correction) is much larger than the "noise" (the residual uncertainty around that correction).
+
+As we demonstrate in @sec-cal-failure, this high SNR causes the IQN's multiplicative $\tau$-embedding architecture to collapse --- all quantile levels converge to the conditional mean, and 90% prediction interval coverage drops to 10--34%. The failure is architectural: when the signal dominates the noise, the IQN's $f_x(x) \odot f_\tau(\phi(\tau))$ merge gives the $\tau$-branch almost no leverage to spread the quantiles apart. The $f_x(x)$ branch learns a strong location estimate, and the elementwise product with $f_\tau(\phi(\tau))$ cannot perturb this estimate enough to create the spread needed for meaningful quantile separation. The optimizer finds it easier to reduce the quantile loss by improving the location estimate (which benefits all quantile levels simultaneously) than by learning to separate the quantile levels from each other.
+
+This failure motivates the *het-MLP ensemble with conformal calibration* (@sec-calibration), which replaces the IQN with an ensemble of MLPs that output both a mean prediction $\hat{\mu}(x)$ and a variance prediction $\hat{\sigma}^2(x)$. The conformal calibration step then adjusts the prediction intervals to achieve exact finite-sample coverage on a calibration set, regardless of whether the parametric variance model is correctly specified. This two-step approach achieves RMSE = 1.219${}^\circ$C (7.1% better than the GP-based GPBC baseline) and 90.2% coverage.
+
+The lake dataset thus teaches an important lesson: not every problem is best served by quantile regression, and knowing when to switch to a parametric variance model is part of the GBC practitioner's toolkit. The diagnostic is straightforward --- if the IQN's prediction intervals are far too narrow (coverage well below nominal) despite adequate training, the high-SNR failure mode is likely the culprit, and a het-MLP with conformal calibration is the recommended alternative. We discuss this diagnostic in detail in @sec-cal-failure, along with the theoretical explanation for why the multiplicative $\tau$-embedding architecture is inherently vulnerable to this failure mode.
+
+
+## LaLonde Wage Data {#sec-data-lalonde}
+
+Our final dataset shifts from prediction and inference to *causal estimation*: measuring the effect of a treatment on an outcome. Causal inference adds a layer of difficulty beyond standard regression, because we can never observe both the treated and untreated outcomes for the same individual --- the *fundamental problem of causal inference* [@holland1986statistics]. For each person in the study, we observe their earnings under the treatment they actually received, but we never observe the counterfactual: what they would have earned under the alternative assignment. The treatment effect for each individual is therefore inherently unobservable, and we must rely on statistical assumptions (or randomization) to estimate population-level effects.
+
+The LaLonde dataset is special because it comes from a randomized experiment, which resolves the identification problem and provides ground truth. Random assignment ensures that the treatment and control groups are comparable in expectation, so a simple difference in means estimates the average treatment effect without any modeling assumptions.
+
+The *LaLonde dataset* [@lalonde1986evaluating] is the gold standard benchmark in causal inference. It evaluates the effect of the National Supported Work (NSW) job training program --- a randomized experiment that provided training and work experience to disadvantaged workers in the 1970s. The NSW program targeted individuals who faced severe barriers to employment: long-term welfare recipients, ex-offenders, former drug addicts, and young school dropouts. Participants received 12--18 months of subsidized employment in a structured work environment, with the goal of transitioning them to regular, unsubsidized jobs. The randomization was rigorous: eligible applicants were randomly assigned to treatment (receiving the program) or control (receiving no special assistance), ensuring that any difference in outcomes between the two groups can be attributed to the program rather than to pre-existing differences between the groups.
+
+::: {.callout-note}
+## Dataset summary
+- *Source*: @lalonde1986evaluating; refined by @dehejia1999causal
+- *Size*: $n = 445$ (185 treated, 260 control)
+- *Dimension*: $d = 8$ covariates
+- *Treatment*: NSW job training program (binary)
+- *Response*: Real earnings in 1978 (dollars)
+- *Key feature*: Randomized experiment with known ATE $\approx$ \$1,500--\$2,000
+- *Used in*: @sec-causal-lalonde (causal inference benchmark)
+:::
+
+The dataset contains the following variables:
+
+| Variable | Description |
+|----------|-------------|
+| `treat` | Treatment indicator (1 = NSW program) |
+| `age` | Age in years |
+| `education` | Years of schooling |
+| `black` | Race indicator |
+| `hispanic` | Race indicator |
+| `married` | Marital status |
+| `nodegree` | No high school diploma |
+| `re74` | Real earnings in 1974 (pre-treatment) |
+| `re75` | Real earnings in 1975 (pre-treatment) |
+| `re78` | Real earnings in 1978 (outcome) |
+
+: Variables in the LaLonde dataset. {#tbl-data-lalonde-vars}
+
+Following the econometrics literature, we use the log-transformed outcome $\log(\text{re78} + 1)$, which produces a more normally distributed response and treatment effects interpretable as approximate percentage changes. The raw earnings distribution has a substantial point mass at zero (many participants had no earnings in 1978), which presents challenges for standard regression methods that assume a continuous response. The log transformation $\log(\text{re78} + 1)$ stabilizes the variance, produces a more symmetric response distribution, and converts additive treatment effects on the log scale into approximate multiplicative (percentage) effects on the original dollar scale. The "$+1$" inside the logarithm is needed to handle the zero-earnings observations, which map to $\log(1) = 0$ rather than $-\infty$.
+
+The LaLonde data matters for two reasons. Because it comes from a randomized experiment, the *true average treatment effect* (ATE) is known to be approximately \$1,500--\$2,000 in 1978 dollars [@lalonde1986evaluating; @dehejia1999causal], providing ground truth for evaluating causal inference methods. This is rare and valuable: most causal inference benchmarks rely on semi-synthetic data where the treatment effect is imposed by construction, whereas the LaLonde experiment provides a genuine treatment effect estimated from random assignment. The dataset has been reanalyzed by dozens of authors since 1986, and the debate over how to match experimental results with observational estimators [@dehejia1999causal] has shaped the entire field of causal inference methodology.
+
+More distinctively, GBC can estimate the *quantile treatment effect* (QTE) --- not just the average effect, but how the treatment reshapes the entire outcome distribution. The QTE at quantile level $\tau$ measures the difference between the $\tau$-quantile of the treated outcome distribution and the $\tau$-quantile of the control outcome distribution. On the LaLonde data, the QTE profile reveals that the NSW program's primary benefit is preventing the worst outcomes, with large effects at low quantiles ($\tau = 0.05$--$0.30$) and smaller effects at higher quantiles. In practical terms, this means the program was most effective at keeping people from earning nothing at all --- a finding with direct policy implications that the average treatment effect alone would obscure.
+
+This distributional insight is unavailable from methods that estimate only the conditional mean. Standard regression-based causal inference (propensity score matching, inverse probability weighting, doubly robust estimation) delivers the ATE and perhaps the conditional ATE (CATE), but not the QTE. GBC's quantile-native architecture delivers the entire conditional outcome distribution for both treated and control groups, from which the QTE at any level $\tau$ can be read off immediately. We develop this approach fully in @sec-causal-lalonde.
+
+
+## Summary
+
+The datasets in this chapter span the full range of challenges that motivate the GBC framework. We can organize them by the primary difficulty they present:
+
+The *motorcycle data* tests heteroscedastic uncertainty quantification in one dimension --- the simplest possible setting where constant-variance methods fail. The *Flowers and BGP benchmarks* test jump-boundary detection and piecewise surrogates, with boundaries ranging from smooth sinusoids (Phantom) to angular star shapes (Star) to hyperplanes in high dimensions (BGP). The *Friedman function* tests high-dimensional regression with irrelevant inputs and nonlinear interactions. The *active learning benchmarks* (2D Exponential, Rocket LGBB, Satellite GRACE) test sequential experimental design under different response-surface geometries, revealing where GBC and GP methods each excel. The *Ebola ABM* tests likelihood-free Bayesian inference with multimodal outputs and intractable likelihoods. The *lake temperature data* tests what happens when the IQN architecture hits its limits due to high signal-to-noise ratios. And the *LaLonde data* tests causal inference with distributional treatment effects.
+
+In the chapters that follow, we will return to these datasets repeatedly. Each time, the focus will be on the methodology --- the quantile loss, the IQN architecture, the augmentation strategy, the active learning criterion --- while the data description can be found here. The progression through the book roughly follows the progression through the datasets: we start with the motorcycle data in @sec-iqn (simple, univariate, heteroscedastic), move to the jump benchmarks in @sec-jumps and the surrogates in @sec-surrogates (multivariate, piecewise, increasingly complex), proceed to the active learning benchmarks in @sec-active-learning (sequential design with expensive simulators), and conclude with the Bayesian inference (@sec-bayesian-inference), prediction (@sec-prediction), causal inference (@sec-causal), and calibration (@sec-calibration) chapters.
+
+We encourage readers to download the datasets and explore them before proceeding to the methodological chapters. Hands-on familiarity with the data --- its shape, its quirks, its failure modes --- makes the methodological discussions much more concrete. The exercises below provide a starting point for this exploration.
+
+
+## Exercises {#sec-data-exercises}
+
+::: {#exr-data-motorcycle}
+**Exploring the motorcycle data.**
+
+Load the motorcycle data using `from gbc.data import load_motorcycle`. This exercise builds intuition for heteroscedasticity --- the phenomenon that will motivate our use of quantile regression in @sec-quantiles and the IQN in @sec-iqn.
+
+(a) Plot the data and visually identify the three phases (pre-impact, crash, recovery). At approximately what time does the crash event begin and end? Mark these boundaries on your plot.
+
+(b) Compute the sample standard deviation of the response in three windows: $t < 15$ ms, $15 \leq t \leq 35$ ms, and $t > 35$ ms. By what factor does the variance change between the pre-impact and crash phases? Express this as both a ratio of standard deviations and a ratio of variances.
+
+(c) Fit a simple linear regression of acceleration on time. Compute the residuals and plot their absolute values versus time. Does the residual plot confirm heteroscedasticity? A formal Breusch-Pagan test is optional but informative.
+
+(d) Now compute a rolling standard deviation of the response using a window of 10 observations. Plot this rolling standard deviation versus time. Does it capture the same three-phase structure you identified visually?
+:::
+
+::: {#exr-data-friedman}
+**Friedman function exploration.**
+
+Generate $n = 2{,}000$ points from the Friedman function using `from gbc.data import friedman1`. This exercise illustrates the challenge of variable selection and interaction detection in high dimensions.
+
+(a) Compute the correlation between each of the 10 inputs and the response $y$. Which inputs have the largest absolute correlation? Does correlation correctly identify all five active variables? Which active variable has the weakest univariate correlation, and why?
+
+(b) The $\sin(\pi x_1 x_2)$ interaction is invisible to univariate correlations because $x_1$ and $x_2$ individually have near-zero marginal correlation with $y$ (the sine averages out over the other variable). Compute the *partial* dependence of $y$ on $(x_1, x_2)$ by averaging over the remaining inputs. Plot this as a contour map. How does it compare to @fig-data-friedman?
+
+(c) Add Gaussian noise with $\sigma = 1$ and repeat the correlation analysis. Gradually increase $\sigma$ from 1 to 10. At what noise level does the correlation between $x_5$ (the weakest active variable) and $y$ become indistinguishable from zero at a 95% confidence level? What does this imply about the difficulty of variable selection under noise?
+:::
+
+::: {#exr-data-jump}
+**Phantom boundary difficulty.**
+
+This exercise illustrates the hierarchy of classifiers on the sinusoidal jump boundary, building intuition for why the MLP-based boundary augmentation in @sec-jumps works so well.
+
+Generate 5,000 points from the Phantom function (two Gaussian regimes separated by $\sin(x_1) = x_2$). Assign regime labels: $c_i = 1$ if $x_{2,i} > \sin(x_{1,i})$ and $c_i = 0$ otherwise.
+
+(a) Fit a logistic regression classifier to predict the regime from $(x_1, x_2)$. Report the classification accuracy on a held-out test set of 1,000 points. Why does the linear decision boundary fail? Draw the learned decision boundary on a scatter plot of the data. How does the linear boundary compare to the true sinusoidal boundary?
+
+(b) Fit a $k$-nearest-neighbors classifier with $k = 5$. Does it achieve higher accuracy? Visualize the decision boundary by evaluating the classifier on a fine grid. Where does $k$-NN make the most errors --- near the peaks and troughs of the sine curve, or along the straight segments? Explain this in terms of the local geometry of the boundary.
+
+(c) Train a two-layer MLP with 128 hidden units for 1,000 epochs using binary cross-entropy loss. Report the accuracy and visualize the learned decision boundary. Compare with the true boundary $\sin(x_1) = x_2$. How many hidden units are needed to achieve 99% accuracy? Try varying the number of hidden units from 8 to 256 and plot accuracy versus model size.
+
+(d) For each of the three classifiers (logistic, $k$-NN, MLP), compute the classification accuracy specifically for test points that lie within distance 0.1 of the true boundary. How does near-boundary accuracy compare to overall accuracy? This near-boundary accuracy is what matters for the Aug-IQN pipeline, because points far from the boundary are easy to predict regardless of regime assignment.
+:::
+
+::: {#exr-data-lake}
+**Lake temperature structure.**
+
+The lake temperature dataset has temporal structure that affects how we evaluate forecasting models. This exercise develops intuition for the high signal-to-noise ratio problem that causes the IQN to fail in @sec-calibration.
+
+(a) Why is a temporal train/test split (all dates before a cutoff for training, all dates after for testing) more appropriate than a random split for this dataset? What assumption of standard cross-validation would a random split violate? Think about what information from future observations could "leak" into the training set under a random split.
+
+(b) The forecast horizon $h$ ranges from 1 to 30 days. Explain intuitively why the RMSE should increase with $h$. Does this suggest that a single prediction interval width is appropriate for all horizons? How might a good uncertainty quantification model vary its interval width with horizon?
+
+(c) The physics-based GLM provides $\mu_{\text{GLM}}$ and $\sigma_{\text{GLM}}$ as inputs. If the GLM were a perfect forecast, what would the statistical model learn? In this hypothetical, what signal-to-noise ratio would the statistical model face? Explain why this extreme signal-to-noise ratio would cause a quantile regression model to collapse its quantile bands to a single point.
+:::
+
+::: {#exr-data-likelihood}
+**When is the likelihood unavailable?**
+
+This exercise develops the distinction between models with tractable likelihoods (where MCMC can be applied directly) and models where only simulation is possible (requiring likelihood-free methods like ABC or GBC). This distinction is central to @sec-bayesian-inference.
+
+Consider three of the datasets introduced in this chapter: the motorcycle crash data, the Satellite GRACE TPMC simulator, and the Ebola agent-based model.
+
+(a) For the motorcycle data, write down a simple heteroscedastic regression model $y_i = f(t_i) + \sigma(t_i)\varepsilon_i$ with $\varepsilon_i \sim \mathcal{N}(0, 1)$. Explain why the likelihood $p(y \mid f, \sigma)$ can be evaluated in closed form for any given functions $f$ and $\sigma$. If we parameterize $f$ and $\sigma$ as neural networks with weights $w$, can we still evaluate the likelihood $p(y \mid w)$ pointwise?
+
+(b) The TPMC simulator for GRACE launches thousands of virtual particles and aggregates their momentum transfer to compute a drag coefficient. Explain why we can *run* this simulator (sampling from it) but cannot write down the likelihood $p(C_D \mid \theta)$ for the drag coefficient $C_D$ as a function of the thermospheric inputs $\theta$. What role does the Monte Carlo sampling noise play? Is the noise a nuisance or does it carry information about the uncertainty in the drag coefficient?
+
+(c) The Ebola ABM tracks individual agents through stochastic disease transitions. Explain why the likelihood of observing a specific 56-week epidemic trajectory, given the five input parameters, is intractable. How does the number of agents in the simulation affect the dimensionality of the latent state space? If the simulation tracks $N_{\text{agents}} = 10{,}000$ individuals, each with a disease state at each of 56 time steps, what is the approximate dimensionality of the latent state? Why does this make the problem a natural candidate for likelihood-free inference methods like GBC?
+:::
+
+::: {#exr-data-cost}
+**Computational cost comparison.**
+
+Understanding the computational cost of surrogate methods is essential for choosing the right tool for each problem. This exercise makes the $\mathcal{O}(n^3)$ vs. $\mathcal{O}(n)$ distinction concrete.
+
+The datasets in this chapter range from $n = 133$ (motorcycle) to $n = 90{,}000$ (Michalewicz), spanning three orders of magnitude in sample size. This range is representative of real-world applications: some simulators are so expensive that only a few hundred evaluations are feasible (like the TPMC simulator for GRACE at 86 seconds per run), while others can produce hundreds of thousands of training points from cheap-to-evaluate codes.
+
+(a) A GP with a dense covariance matrix requires $\mathcal{O}(n^3)$ flops for training (Cholesky factorization) and $\mathcal{O}(n^2)$ storage. Compute the approximate number of floating-point operations and memory (in GB, assuming 8 bytes per double) required for training a GP on the motorcycle data ($n = 133$), the Friedman data ($n = 2{,}000$), and the Michalewicz data ($n = 90{,}000$). At which sample size does the GP become infeasible on a machine with 64 GB of RAM? Assume the constant in the $\mathcal{O}(n^3)$ is approximately 1/3 (the leading term in Cholesky factorization).
+
+(b) GBC processes data in mini-batches of size $B$ for $E$ epochs. If each mini-batch forward pass costs $\mathcal{O}(B \cdot w^2)$ flops (where $w$ is the network width), what is the total training cost for $n$ training points and $E$ epochs? How does this scale with $n$ compared to the GP? For the Friedman benchmark ($n = 2{,}000$, $w = 128$, $B = 256$, $E = 5{,}000$), compute the approximate total flops and compare to the GP's Cholesky cost.
+
+(c) At test time, a GP prediction at a new point costs $\mathcal{O}(n)$ (with a cached Cholesky factor) while GBC costs $\mathcal{O}(w^2)$ independent of $n$. For the Satellite GRACE benchmark ($n = 500$, $w = 128$), compute the ratio of GP to GBC prediction costs. How does this ratio change at $n = 10{,}000$? In an active learning loop where we must re-predict at many candidate points after each acquisition, which cost dominates?
+:::

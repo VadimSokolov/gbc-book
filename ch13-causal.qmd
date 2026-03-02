@@ -1,0 +1,856 @@
+# Causal Inference via GBC {#sec-causal}
+
+> "*No causation without manipulation.*" -- Paul Holland
+
+In the preceding chapters, we developed Generative Bayesian Computation as a framework for learning conditional distributions via quantile neural networks. We learned how the noise outsourcing theorem (@sec-noise-outsourcing) guarantees that any conditional distribution can be represented as $Y = G^*(\tau, X)$ with $\tau \sim \text{Uniform}(0,1)$, and how the IQN architecture (@sec-iqn) learns this map from data. We applied these ideas to surrogates (@sec-surrogates), jump detection (@sec-jumps), and Bayesian inference (@sec-bayesian-inference).
+
+In this chapter, we turn to what is arguably the most consequential application of distributional learning: *causal inference*. The question is not "what is the distribution of $Y$ given $X$?" but rather "what *would* the distribution of $Y$ be if we *intervened* and set the treatment to $Z = 1$ versus $Z = 0$?" This is a fundamentally different question, and answering it requires additional structure---the potential outcomes framework.
+
+The GBC approach to causal inference builds on a simple but powerful observation: the conditional average treatment effect (CATE) is an integral of the conditional quantile function. Since the IQN already learns the entire conditional quantile function, we get CATE estimation *for free* as a by-product. But we get much more than the CATE. We get the full conditional distribution of outcomes under each treatment arm, which reveals how treatment reshapes the entire outcome distribution---not just its mean. This is the *quantile treatment effect* (QTE), and it answers questions that neither Double Machine Learning [@chernozhukov2018double] nor Bayesian Causal Forests [@hahn2020bayesian] can address without additional estimation.
+
+The material in this chapter draws on @nareklishvili2026causal, which develops the GBC framework for causal inference in detail. We begin with the potential outcomes framework and the three identification assumptions, then introduce the propensity score module and the three-part loss function that together form the GBC causal architecture. We establish semiparametric efficiency and compare convergence rates with Double Machine Learning. The LaLonde job training benchmark and controlled simulation studies validate the theory. We close with distributional treatment effects---a concept that goes beyond both ATE and QTE to measure the total shift between treated and control outcome distributions via the Wasserstein distance from optimal transport.
+
+## The Causal Inference Problem {#sec-causal-problem}
+
+The potential outcomes framework, due to @splawa-neyman1990application and @rubin1974estimating, provides the mathematical language for causal inference. Consider $n$ units indexed by $i = 1, \ldots, n$. Each unit has covariates $X_i \in \mathbb{R}^p$ (pre-treatment characteristics such as age, income, or health status), a binary treatment indicator $Z_i \in \{0, 1\}$ (with $Z_i = 1$ meaning treated and $Z_i = 0$ meaning control), and potential outcomes $Y_i(1)$ and $Y_i(0)$ representing the outcomes that *would* occur under treatment and control, respectively.
+
+The *individual treatment effect* for unit $i$ is
+$$
+\tau_i = Y_i(1) - Y_i(0).
+$$ {#eq-ite}
+
+This is the quantity we would most like to know: how much does the treatment change the outcome for this specific individual? The fundamental problem of causal inference is that we can never observe both $Y_i(1)$ and $Y_i(0)$ for the same unit. We observe only one potential outcome:
+$$
+Y_i = Z_i \cdot Y_i(1) + (1 - Z_i) \cdot Y_i(0).
+$$ {#eq-observed}
+
+This is the *consistency* assumption: the observed outcome equals the potential outcome under the treatment actually received. The other potential outcome is forever counterfactual---we can imagine it, but we cannot measure it.
+
+::: {.callout-note appearance="simple" title="The Fundamental Problem of Causal Inference"}
+For each unit $i$, we observe either $Y_i(1)$ or $Y_i(0)$, but never both. The individual treatment effect $\tau_i = Y_i(1) - Y_i(0)$ is therefore never directly observable. Causal inference is, at its core, a missing data problem [@holland1986statistics].
+:::
+
+To make progress despite the missing data, we impose three assumptions.
+
+*Assumption 1: Stable Unit Treatment Value (SUTVA).* Each unit's potential outcomes depend only on its own treatment assignment, not on the treatments assigned to other units:
+$$
+Y_i = Y_i(Z_i), \quad \text{not } Y_i(Z_1, \ldots, Z_n).
+$$
+SUTVA rules out interference---if one person receives a vaccine, it should not directly change another person's health outcome. This assumption fails when treatment effects spill over across units (e.g., in network settings or when treated individuals interact with controls).
+
+*Assumption 2: Conditional Unconfoundedness (Ignorability).* Given the observed covariates, treatment assignment is independent of the potential outcomes:
+$$
+(Y_i(1), Y_i(0)) \perp\!\!\!\perp Z_i \mid X_i.
+$$ {#eq-ignorability}
+
+This is the key "no unmeasured confounders" assumption. It says that once we condition on $X$, knowing whether $Z = 0$ or $Z = 1$ provides no additional information about the potential outcomes. Intuitively, within strata of $X$, treatment assignment is as good as random.
+
+*Assumption 3: Positivity (Overlap).* Every unit has a positive probability of receiving either treatment:
+$$
+0 < P(Z_i = 1 \mid X_i = x) < 1 \quad \text{for all } x \in \mathcal{X}.
+$$ {#eq-positivity}
+
+Positivity ensures that we have both treated and control units at every covariate value. Without it, we cannot learn treatment effects in regions where everyone is treated (or no one is).
+
+Under these three assumptions, the observed data $(X_i, Z_i, Y_i)_{i=1}^n$ are sufficient to identify causal effects. The key insight is that ignorability allows us to write
+$$
+E[Y(z) \mid X = x] = E[Y \mid X = x, Z = z],
+$$
+which converts an unobservable quantity (the expected potential outcome) into an observable one (the conditional expectation of the observed outcome given covariates and treatment). This is the bridge from causal to statistical.
+
+
+## CATE and ATE {#sec-causal-cate}
+
+The *conditional average treatment effect* (CATE) is the expected treatment effect for a unit with covariates $x$:
+$$
+\tau(x) = E[Y(1) - Y(0) \mid X = x] = E[Y \mid X = x, Z = 1] - E[Y \mid X = x, Z = 0].
+$$ {#eq-cate}
+
+The CATE captures *heterogeneity* in treatment effects. A job training program might help workers without a college degree (large $\tau(x)$) but provide little benefit to workers who already have advanced degrees (small $\tau(x)$). Understanding this heterogeneity is essential for targeting interventions effectively.
+
+The *average treatment effect* (ATE) is the population mean of the CATE:
+$$
+\text{ATE} = E[\tau(X)] = E[Y(1) - Y(0)] = \int \tau(x) \, dP_X(x).
+$$ {#eq-ate}
+
+The ATE tells us whether the treatment helps on average. It is the most commonly reported causal estimand, but it can be misleading when treatment effects are heterogeneous. An ATE of zero could mean the treatment has no effect on anyone, or it could mean it helps half the population and hurts the other half by equal amounts.
+
+### Beyond the mean: what QTEs reveal that CATEs miss {#sec-causal-qte-motivation}
+
+The CATE and ATE summarize the treatment effect through the conditional *mean*. But the mean is only one summary of the outcome distribution. What if we want to know how the treatment affects the *entire distribution* of outcomes? This is where the GBC framework provides a distinctive advantage.
+
+To see why the mean is not enough, consider a concrete example. Suppose a government job training program is evaluated on its effect on annual wages. The ATE might be \$500---a modest and perhaps disappointing result. But this average conceals a more interesting story. At the 10th percentile of the wage distribution (the lowest earners), the program might shift wages from \$0 to \$4,000---a transformative effect for individuals who would otherwise have had zero labor income. At the 90th percentile (the highest earners), the program might have no effect at all, or even a slightly negative effect if it displaces time that would have been spent on more productive job search. The ATE of \$500 is the average of a large positive effect at the bottom and a near-zero effect at the top, but it conveys neither the magnitude of the benefit to the most disadvantaged nor the irrelevance of the program for the most advantaged. This is precisely the kind of heterogeneity that the *quantile treatment effect* reveals.
+
+The CATE $\tau(x) = E[Y(1) - Y(0) \mid X = x]$ captures heterogeneity across *covariates*---how the mean treatment effect varies across subgroups defined by age, education, or income. The QTE captures a fundamentally different kind of heterogeneity: variation across the *outcome distribution* for a fixed covariate profile. Two individuals with identical covariates $x$ can experience very different treatment effects because one happens to draw a favorable unobserved shock (high $\tau$) and the other draws an unfavorable one (low $\tau$). The CATE averages over these unobserved shocks; the QTE traces out how the treatment reshapes the distribution from which they are drawn.
+
+The *quantile treatment effect* (QTE) at level $\tau$ for a unit with covariates $x$ is
+$$
+\text{QTE}(\tau, x) = Q_{Y(1)}(\tau \mid x) - Q_{Y(0)}(\tau \mid x) = F^{-1}_{Y \mid X=x, Z=1}(\tau) - F^{-1}_{Y \mid X=x, Z=0}(\tau),
+$$ {#eq-qte}
+where the second equality uses the ignorability assumption. The QTE tells us how the treatment shifts the $\tau$-th quantile of the outcome distribution. For instance, $\text{QTE}(0.5, x)$ captures the effect on the median outcome, $\text{QTE}(0.1, x)$ captures the effect on the lower tail (the worst-off 10%), and $\text{QTE}(0.9, x)$ captures the effect on the upper tail (the best-off 10%). A treatment might have a modest median effect but a large effect in the tails---it could prevent catastrophic outcomes without much changing typical ones. This is common in medical treatments, where the primary goal is to reduce the probability of severe adverse events.
+
+The CATE is recovered by integrating the QTE over quantile levels:
+$$
+\tau(x) = \int_0^1 \text{QTE}(q, x) \, dq.
+$$ {#eq-cate-from-qte}
+
+This identity---which follows from the fact that the mean is the integral of the quantile function---is the key link between the GBC framework and classical causal estimands. The IQN learns the full quantile function $\hat{Q}(q \mid x, z)$. The QTE falls out immediately as the difference of two quantile evaluations. The CATE falls out as the integral (or average) of the QTE over quantile levels.
+
+In policy applications, the QTE is often more decision-relevant than the CATE. A policymaker deciding whether to fund a job training program cares not only about the average wage gain but also about whether the program lifts the worst-off individuals out of poverty (the lower tail) and whether it creates a few spectacular successes (the upper tail). A Rawlsian social planner would focus on $\text{QTE}(0.05, x)$---the effect on the 5th percentile---while a utilitarian would integrate across all quantile levels to recover the CATE. The GBC framework supports both perspectives from a single trained model, simply by evaluating the quantile function at different levels.
+
+::: {.callout-important appearance="simple" title="Interpretive Caveat"}
+The QTE compares the same quantile of the *marginal* distributions under treatment and control. It does *not* tell us about the individual-level treatment effect at that quantile. In general,
+$$
+Q_{Y(1)}(\tau \mid x) - Q_{Y(0)}(\tau \mid x) \neq Q_{Y(1) - Y(0)}(\tau \mid x).
+$$
+The left side compares the $\tau$-th quantile of outcomes under treatment to the $\tau$-th quantile under control. The right side is the $\tau$-th quantile of the treatment effect distribution itself. These are equal only under rank preservation---when the treatment does not change the rank ordering of individuals within their outcome distribution [@chernozhukov2005iv].
+:::
+
+
+## The Propensity Module {#sec-causal-propensity}
+
+The *propensity score* is the probability of receiving treatment given covariates:
+$$
+e(x) = P(Z = 1 \mid X = x).
+$$ {#eq-propensity}
+
+@rosenbaum1983central proved a remarkable result: under ignorability, conditioning on the scalar propensity score $e(x)$ is sufficient for removing confounding bias, even though $X$ may be high-dimensional. Formally, if $(Y(1), Y(0)) \perp\!\!\!\perp Z \mid X$, then $(Y(1), Y(0)) \perp\!\!\!\perp Z \mid e(X)$. The propensity score is a *balancing score*: within strata of $e(x)$, the distribution of covariates is the same for treated and control units.
+
+This dimension-reduction property is precisely what makes the propensity score useful for GBC. Instead of learning the conditional quantile function in the full $p$-dimensional covariate space, we can condition on the scalar $e(x)$---or, more practically, include it as an additional feature.
+
+In the GBC framework, we estimate the propensity score $\hat{e}(x)$ and include it as an additional input to the IQN. The augmented input vector becomes
+$$
+\tilde{x} = (x, \hat{e}(x)) \in \mathbb{R}^{p+1},
+$$
+and the IQN learns the quantile function $\hat{Q}(q, \tilde{x}, z)$. This design follows @hahn2020bayesian, who showed that including $\hat{e}(x)$ in the prognostic function of Bayesian Causal Forests addresses *regularization-induced confounding*: when the prior (or regularizer) pulls the treatment effect toward zero, strong confounding can bias the estimates unless the model explicitly adjusts for the propensity score.
+
+Why include the propensity score as a *feature* rather than using it for reweighting? The GBC perspective is that $\hat{e}(x)$ provides the network with a direct signal about how balanced the treatment and control groups are at each covariate value. In regions where $\hat{e}(x) \approx 0.5$ (good overlap), the network can learn treatment effects from abundant data on both sides. In regions where $\hat{e}(x) \approx 0$ or $1$ (poor overlap), the propensity score alerts the network that extrapolation is required.
+
+The classical approach to using the propensity score is *inverse propensity weighting* (IPW). The Horvitz--Thompson estimator for the ATE is
+$$
+\hat{\tau}_{\text{IPW}} = \frac{1}{n} \sum_{i=1}^n \left[ \frac{Z_i Y_i}{\hat{e}(X_i)} - \frac{(1 - Z_i) Y_i}{1 - \hat{e}(X_i)} \right].
+$$ {#eq-ipw}
+
+IPW reweights each observation by the inverse of its treatment probability, effectively creating a pseudo-population in which treatment assignment is independent of covariates. The trouble with IPW is that it can be extremely noisy when $\hat{e}(x)$ is close to 0 or 1---extreme weights amplify estimation variance.
+
+GBC sidesteps this problem entirely. By including $\hat{e}(x)$ as a feature, the network learns how to adjust for confounding *locally*, without explicit reweighting. The propensity score enters the quantile function as a smooth input, and the network learns to weight its influence appropriately at each covariate value. This is related to the *doubly robust* approach [@chernozhukov2018double], which combines outcome modeling with propensity weighting, but GBC achieves the adjustment through the architecture rather than through an explicit formula.
+
+In practice, $e(x)$ is unknown and must be estimated from data. The simplest approach is logistic regression:
+$$
+\hat{e}(x) = \sigma(w^\top x + b),
+$$
+where $\sigma$ is the sigmoid function. For more complex propensity structures, a neural network can be used:
+
+```{python}
+#| eval: true
+#| code-fold: false
+#| output: false
+import torch
+import torch.nn as nn
+
+class PropensityNet(nn.Module):
+    """Simple MLP for propensity score estimation."""
+    def __init__(self, input_dim, hidden_dim=64):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        return self.net(x).squeeze(-1)
+
+# Example: 5 covariates
+prop_net = PropensityNet(input_dim=5)
+x_test = torch.randn(10, 5)
+e_hat = prop_net(x_test)
+print(f"Propensity scores: {e_hat[:5].detach().numpy().round(3)}")
+```
+
+The propensity network is trained using binary cross-entropy loss on the treatment labels:
+$$
+\ell_\pi = -\frac{1}{n} \sum_{i=1}^n \left[ Z_i \log \hat{e}(X_i) + (1 - Z_i) \log(1 - \hat{e}(X_i)) \right].
+$$ {#eq-propensity-loss}
+
+A well-calibrated propensity score is important for the downstream CATE estimation. If the propensity model is badly misspecified, the augmented IQN may inherit the bias. In practice, we recommend checking calibration by binning the estimated propensity scores and comparing the observed treatment rate within each bin to the average predicted probability. A well-calibrated model should produce a roughly linear relationship between predicted and observed treatment rates. When calibration is poor, it may help to use a more flexible propensity model (e.g., adding hidden layers) or to apply Platt scaling as a post-hoc correction.
+
+
+## The Three-Part Loss {#sec-causal-loss}
+
+The GBC approach to causal inference trains a single IQN that takes as input the covariates $x$, the treatment indicator $z$, the estimated propensity score $\hat{e}(x)$, and a quantile level $q \sim \text{Uniform}(0,1)$. The network outputs $\hat{Q}(q, x, z, \hat{e}(x))$, an estimate of the $q$-th conditional quantile of $Y$ given $(X, Z)$.
+
+To train the outcome model effectively for causal estimation, we use a two-step procedure. We estimate the propensity score $\hat{e}(x)$ in a first step using a separate network trained with binary cross-entropy. The estimated propensity is then included as an additional covariate when training the outcome model, which uses a two-part composite loss.
+
+The outcome model training loss is
+$$
+\mathcal{L} = \mathcal{L}_{\text{pinball}} + w_1 \mathcal{L}_{\text{MAE}},
+$$ {#eq-three-part}
+where the components are:
+
+*1. Pinball loss (quantile fidelity).* The core quantile regression loss:
+$$
+\mathcal{L}_{\text{pinball}} = \frac{1}{n} \sum_{i=1}^n \rho_q(Y_i - \hat{Q}(q, \tilde{x}_i, Z_i)),
+$$
+where $\rho_q(u) = u(q - \mathbf{1}(u < 0))$ is the check function from @koenker1978regression. This ensures the network learns the conditional quantile function accurately. During training, $q$ is sampled uniformly from $(0, 1)$ at each minibatch, so the network sees the full range of quantile levels.
+
+*2. MAE anchor (mean accuracy).* A mean absolute error term that encourages the network's median prediction ($q = 0.5$) to track the conditional mean:
+$$
+\mathcal{L}_{\text{MAE}} = \frac{1}{n} \sum_{i=1}^n |Y_i - \hat{Q}(0.5, \tilde{x}_i, Z_i)|.
+$$
+This stabilizes training by providing a "ground truth" anchor for the central tendency of the outcome distribution. Without it, the network might learn accurate quantiles in the tails but drift on the median.
+
+The weight $w_1$ controls the relative importance of the MAE anchor. In practice, we find that $w_1 = 0.1$ works well across a range of settings.
+
+The two-part loss is the GBC alternative to Double Machine Learning's orthogonalization strategy. DML achieves robustness to nuisance estimation errors through Neyman-orthogonal score functions and cross-fitting. GBC achieves a similar goal through the architecture: by jointly training the propensity and outcome components, the network learns to adjust for confounding in a way that is robust to moderate misspecification of either component.
+
+The key difference is that DML constructs a *pseudo-outcome* that algebraically removes the effect of nuisance parameter estimation, while GBC lets the network learn the adjustment implicitly. DML's approach is elegant and comes with strong theoretical guarantees. GBC's approach is more flexible but requires the network to have sufficient capacity to learn the confounding adjustment from data.
+
+Putting together the propensity module and the three-part loss, the full GBC algorithm for causal inference is:
+
+::: {.callout-tip appearance="simple" title="Algorithm 13.1: GBC for Causal Inference"}
+*Input:* Observed data $(X_i, Z_i, Y_i)_{i=1}^n$.
+
+*Step 1 (Propensity).* Estimate $\hat{e}(X_i) = \hat{P}(Z = 1 \mid X_i)$ via logistic regression or a neural network. Construct augmented covariates $\tilde{X}_i = (X_i, \hat{e}(X_i))$.
+
+*Step 2 (Train IQN).* Minimize the two-part loss (@eq-three-part) with respect to the IQN parameters, using $\hat{e}(X_i)$ as an additional input covariate. At each minibatch, sample $q \sim \text{Uniform}(0, 1)$ and compute $\hat{Q}(q, \tilde{X}_i, Z_i)$. The propensity is not re-estimated in this step; it enters only as a fixed covariate.
+
+*Step 3 (Infer).* For a new unit with covariates $x$, evaluate the QTE as $\widehat{\text{QTE}}(q, x) = \hat{Q}(q, \tilde{x}, 1) - \hat{Q}(q, \tilde{x}, 0)$ for any $q \in (0,1)$. The CATE is obtained by averaging over a grid of quantile levels $\mathcal{U} = \{0.05, 0.15, \ldots, 0.95\}$: $\hat{\tau}(x) = \frac{1}{|\mathcal{U}|} \sum_{q \in \mathcal{U}} \widehat{\text{QTE}}(q, x)$. Finally, the ATE is the average of the CATE over the test sample: $\widehat{\text{ATE}} = \frac{1}{n_{\text{test}}} \sum_{j} \hat{\tau}(X_j)$.
+
+*Output:* $\hat{\tau}(x)$, $\widehat{\text{QTE}}(q, x)$, and the full conditional quantile function $\hat{Q}(q, \tilde{x}, z)$.
+:::
+
+
+## Semiparametric Efficiency {#sec-causal-efficiency}
+
+A natural question is: how accurate can *any* estimator of the ATE or CATE be, regardless of the method used? The semiparametric efficiency bound provides the answer. This bound is the analogue of the Cramer--Rao lower bound for parametric models, but it applies in the semiparametric setting where we make minimal assumptions about the data-generating process beyond the three causal identification conditions (SUTVA, ignorability, positivity). Any estimator that achieves this bound extracts all available information from the data about the treatment effect, and no regular estimator can do better.
+
+@hahn1998role showed that the semiparametric variance bound for estimating the ATE $\tau_0 = E[Y(1) - Y(0)]$ is
+$$
+V_{\text{eff}} = E\!\left[ \frac{\text{Var}(Y(1) \mid X)}{e(X)} + \frac{\text{Var}(Y(0) \mid X)}{1 - e(X)} + (\tau(X) - \tau_0)^2 \right].
+$$ {#eq-eff-bound}
+
+The first two terms reflect the difficulty of estimating the conditional mean outcomes---they are large when the outcome variance is high or when the propensity score is extreme (poor overlap). The third term captures heterogeneity: it is zero when the treatment effect is constant and grows as heterogeneity increases. To build intuition, consider a randomized experiment with $e(x) = 0.5$ for all $x$, constant treatment effect $\tau(x) = \tau_0$, and homoskedastic outcomes with variance $\sigma^2$ under both treatment arms. Then $V_{\text{eff}} = 2\sigma^2 / 0.5 + 2\sigma^2 / 0.5 = 4\sigma^2$, which is the familiar variance of the difference-in-means estimator. Confounding ($e(x)$ varying) and heterogeneity ($\tau(x) \neq \tau_0$) both inflate the bound, making causal estimation fundamentally harder.
+
+Any regular estimator satisfies $\sqrt{n}(\hat{\tau} - \tau_0) \xrightarrow{d} \mathcal{N}(0, V)$ with $V \geq V_{\text{eff}}$. An estimator that achieves $V = V_{\text{eff}}$ is called *semiparametrically efficient*.
+
+The tool for constructing efficient estimators is the *efficient influence function* (EIF):
+$$
+\psi(Y, Z, X; \tau, \eta) = \frac{Z - e(X)}{e(X)(1 - e(X))} \bigl(Y - \mu_Z(X)\bigr) + \mu_1(X) - \mu_0(X) - \tau,
+$$ {#eq-eif}
+where $\eta = (e(x), \mu_0(x), \mu_1(x))$ collects the nuisance functions: the propensity score and the conditional means $\mu_z(x) = E[Y \mid X = x, Z = z]$. The EIF has mean zero at the true parameter values, $E[\psi(Y, Z, X; \tau_0, \eta_0)] = 0$, and the semiparametric variance bound equals $V_{\text{eff}} = E[\psi^2]$.
+
+A crucial property of the EIF is *Neyman orthogonality*: the derivative of its expectation with respect to the nuisance parameters vanishes at the truth:
+$$
+\left. \frac{\partial}{\partial \eta} E[\psi(Y, Z, X; \tau_0, \eta)] \right|_{\eta = \eta_0} = 0.
+$$ {#eq-neyman}
+
+This means that small errors in estimating the nuisance functions $e(x)$ and $\mu_z(x)$ have only a *second-order* effect on the treatment effect estimate. This is the property that makes DML work: by using Neyman-orthogonal scores, DML achieves $\sqrt{n}$-consistent ATE estimation even when the nuisance functions are estimated at slower-than-$\sqrt{n}$ nonparametric rates.
+
+Under regularity conditions, the GBC posterior for the ATE concentrates on the semiparametric efficiency bound. We should emphasize what this means: GBC pays *no asymptotic price* for estimating the full conditional quantile function rather than just the conditional mean. The additional distributional information---the QTE, the CDTE, the full shape of the outcome distribution under each treatment arm---comes entirely for free. This is because the CATE is a one-dimensional projection (the integral) of the quantile function, and projecting a well-estimated high-dimensional object onto a lower-dimensional subspace does not increase the estimation error. The result relies on the semiparametric Bernstein--von Mises theorem [@castillo2014bernstein]:
+
+::: {.callout-tip appearance="simple" title="Proposition 13.1: GBC Semiparametric Efficiency"}
+Let $\hat{\tau}_{\text{GBC}} = R^{-1} \sum_{r=1}^R \tau^{(r)}$ where $\{\tau^{(r)}\}$ are draws from the GBC posterior, obtained by sampling $q^{(r)} \sim \text{Uniform}(0,1)$ and computing $\tau^{(r)}(x) = \hat{Q}(q^{(r)}, \tilde{x}, 1) - \hat{Q}(q^{(r)}, \tilde{x}, 0)$. Under unconfoundedness, overlap, SUTVA, and the semiparametric BvM conditions:
+$$
+\sqrt{n}\,(\hat{\tau}_{\text{GBC}} - \tau_0) \;\xrightarrow{d}\; \mathcal{N}(0, V_{\text{eff}}).
+$$
+Moreover, the GBC score is asymptotically Neyman-orthogonal, implying double robustness: the estimator remains $\sqrt{n}$-consistent provided the product of the propensity score and outcome model convergence rates is $o(n^{-1/2})$.
+:::
+
+The proof, detailed in @nareklishvili2026causal, proceeds in three steps. First, the semiparametric BvM theorem shows that the GBC posterior concentrates on a $\sqrt{n}$-ball around the efficient estimator. Second, the efficient influence function $\psi$ is shown to be orthogonal to the nuisance tangent space, which transfers Neyman orthogonality to the GBC estimator. Third, the double robustness follows because the GBC score is asymptotically equivalent to $\psi$, and $\psi$ satisfies the required product-rate condition.
+
+The practical implication is reassuring: GBC pays no asymptotic price for estimating the full conditional quantile function rather than just the conditional mean. The distributional information comes for free.
+
+The double robustness property deserves special emphasis. It says that the GBC estimator of the ATE is $\sqrt{n}$-consistent even if either the propensity score model *or* the outcome model is somewhat misspecified, as long as both are estimated at reasonable rates whose product satisfies the $o(n^{-1/2})$ condition. Concretely, if the propensity score converges at rate $n^{-1/4}$ and the outcome model converges at rate $n^{-1/4}$, their product converges at rate $n^{-1/2}$, which is just fast enough. If one converges faster---say $n^{-1/3}$---the other is allowed to converge more slowly ($n^{-1/6}$). This flexibility is what makes the approach robust to partial misspecification. In the GBC framework, double robustness arises from the architecture (the joint training of the propensity and outcome components) rather than from the explicit algebraic construction used by DML. The orthogonalization is *learned* rather than *imposed*.
+
+
+## Rate Advantage over DML {#sec-causal-dml}
+
+To understand when and why GBC outperforms DML, we first need to understand how DML works. The Double Machine Learning framework of @chernozhukov2018double uses a two-stage procedure to estimate treatment effects while removing confounding bias. In the first stage, DML estimates two nuisance functions: the propensity score $\hat{m}(x) = \hat{P}(Z = 1 \mid X = x)$ and the outcome regression $\hat{g}(x) = \hat{E}[Y \mid X = x]$. These can be estimated using any flexible machine learning method---random forests, gradient boosting, neural networks. The purpose of this first stage is to "partial out" the confounding: by predicting both the treatment and the outcome from confounders, DML isolates the residual variation that is attributable to the causal effect.
+
+In the second stage, DML regresses the outcome residuals $Y_i - \hat{g}(X_i)$ on the treatment residuals $Z_i - \hat{m}(X_i)$ to estimate the treatment effect. The key theoretical insight is the *Neyman orthogonality* condition: the score function for the treatment effect parameter $\theta_0$ is constructed so that its derivative with respect to the nuisance parameters vanishes at the truth. This means that first-stage estimation errors in $\hat{g}$ and $\hat{m}$ affect the treatment effect estimate only at second order, enabling $\sqrt{n}$-consistent estimation of $\theta_0$ even when the nuisance functions converge at slower nonparametric rates. DML also uses *cross-fitting* (sample splitting) to avoid overfitting bias: the nuisance functions are estimated on one fold of the data and the treatment effect is estimated on the other, then the roles are swapped and the estimates averaged.
+
+The limitation of DML's most common specification---the partially linear regression (PLR) model $Y = \theta_0 Z + g_0(X) + U$---is the assumption of a *constant* treatment effect $\theta_0$. This means the treatment affects all individuals equally, regardless of their covariates. When the true CATE is heterogeneous, as in most real applications, the PLR specification yields a biased estimate that is a weighted average of the true CATE function. DML's interactive regression model (IRM) relaxes this assumption, but estimating the full CATE function $\tau(x) = E[Y \mid X = x, Z = 1] - E[Y \mid X = x, Z = 0]$ in $p$ dimensions remains subject to the curse of dimensionality.
+
+When does GBC outperform DML for CATE estimation? The answer depends on the *dimensionality of confounding*. The key result is @stone1982optimal's minimax rate for nonparametric regression: for a $\beta$-smooth function in $d$ dimensions, the optimal MSE rate is
+$$
+\text{MSE} = O(n^{-2\beta/(2\beta + d)}).
+$$ {#eq-stone-rate}
+
+This rate depends on $d$---the curse of dimensionality. Estimating a function in 20 dimensions is fundamentally harder than in 3 dimensions, regardless of the method used.
+
+The GBC advantage arises when confounding is *low-dimensional*. Suppose there are $p$ observed covariates, but the treatment assignment and outcome depend on covariates only through $k$ latent directions ($k \ll p$). @rosenbaum1983central showed that the propensity score itself is a one-dimensional sufficient statistic for treatment assignment. More generally, the confounding structure may involve $k$ directions, where $k$ is much smaller than $p$.
+
+DML's final-stage CATE learner operates in the full $p$-dimensional covariate space. GBC, by contrast, can operate in the $k$-dimensional latent space after dimension reduction via the propensity score embedding. Applying Stone's rate:
+
+$$
+\text{MSE}_{\text{DML}} = O(n^{-2\beta/(2\beta + p)}), \qquad \text{MSE}_{\text{GBC}} = O(n^{-2\beta/(2\beta + k)}).
+$$ {#eq-rate-comparison}
+
+The MSE ratio is
+$$
+\frac{\text{MSE}_{\text{DML}}}{\text{MSE}_{\text{GBC}}} = O\!\left(n^{\,\frac{2\beta(p - k)}{(2\beta + k)(2\beta + p)}}\right).
+$$ {#eq-mse-ratio}
+
+This ratio grows *without bound* as $n \to \infty$, meaning GBC's advantage increases with sample size when $k < p$.
+
+To make this concrete, consider $\beta = 2$ (twice-differentiable CATE function), $p = 20$ observed covariates, and $k = 3$ latent confounders. The rates are:
+$$
+\text{DML RMSE rate} = O(n^{-1/12}), \qquad \text{GBC RMSE rate} = O(n^{-2/7}).
+$$
+
+The exponent for GBC ($-2/7 \approx -0.286$) is 3.4 times larger in magnitude than DML's ($-1/12 \approx -0.083$). At selected sample sizes:
+
+| $n$ | MSE ratio (DML/GBC) | MSE reduction |
+|---:|---:|---:|
+| 200 | 8.5x | 88% |
+| 500 | 12.4x | 92% |
+| 1,000 | 16.4x | 94% |
+| 2,000 | 21.7x | 95% |
+
+: Theoretical MSE ratio between DML and GBC under low-dimensional confounding ($\beta = 2$, $p = 20$, $k = 3$). The ratio grows as $n^{0.405}$. {#tbl-mse-ratio}
+
+These are *asymptotic* predictions assuming equal multiplicative constants. In practice, finite-sample gains are smaller due to constant factors and estimation error in the dimension reduction step (see @sec-causal-simulation).
+
+The rate advantage is amplified when the CATE function has *compositional structure*---when it can be written as a superposition of lower-dimensional functions. @schmidt-hieber2020nonparametric showed that deep ReLU networks with depth $L \asymp \log n$ achieve the rate
+$$
+\text{MSE} \leq C \max_{i=0,\ldots,J} n^{-2\beta_i^*/(2\beta_i^* + t_i)} \log^3 n,
+$$ {#eq-compositional-rate}
+where $t_i$ is the effective input dimension of the $i$-th compositional layer and $\beta_i^*$ are effective smoothness indices. For additive models ($t_i = 1$), the rate becomes $O(n^{-2\beta/(2\beta + 1)})$, which is *independent of the ambient dimension $p$*.
+
+@padilla2022quantile extended this result to quantile regression with the pinball loss, showing that the same compositional rates hold for conditional quantile estimation---even under heavy-tailed error distributions. This means the full distributional output of GBC comes at no statistical cost relative to point estimation.
+
+The rate advantage requires three conditions. First, confounding must be low-dimensional ($k \ll p$), since the gap disappears as $k \to p$. In many applications this is plausible: treatment assignment depends on a handful of key variables (income, health status, geographic location) even when the analyst observes dozens of covariates. Second, dimension reduction must be accurate: the propensity score and any additional sufficient directions must be well estimated. If the dimension reduction step introduces substantial error, the finite-sample gains over DML will be smaller than the theory predicts. Third, the model must be correctly specified, because GBC's posterior depends on the forward simulator, whereas DML's orthogonalization is more robust to misspecification of the individual nuisance components.
+
+When these conditions are met, GBC can achieve substantially lower CATE estimation error than DML, especially at moderate sample sizes. In settings where these conditions fail---for instance, when confounding is genuinely high-dimensional or when the data-generating process is poorly understood---DML's orthogonalization offers a safer default.
+
+
+## LaLonde Benchmark {#sec-causal-lalonde}
+
+For the LaLonde analysis, we report the *marginal* QTE, defined as $\text{QTE}(\tau) = Q_{Y(1)}(\tau) - Q_{Y(0)}(\tau)$ where the quantiles are over the marginal outcome distributions---this differs from the conditional QTE $\text{QTE}(\tau, x)$ at a specific covariate value.
+
+The LaLonde dataset [@lalonde1986evaluating] is the gold standard benchmark in causal inference. It evaluates the effect of the National Supported Work (NSW) job training program---a randomized experiment that provided training and work experience to disadvantaged workers in the 1970s. The experimental benchmark estimates that the program increased earnings by roughly \$1,500--\$2,000 in 1978 dollars [@lalonde1986evaluating; @dehejia1999causal].
+
+The dataset contains $n = 445$ observations with covariates including age, years of education, race indicators (Black, Hispanic), marital status, high school dropout indicator, and prior earnings in 1974 and 1975. The outcome is real earnings in 1978. Following the econometrics literature, we use the log-transformed outcome $\log(\text{re78} + 1)$, which produces a more normally distributed response and treatment effects interpretable as approximate percentage changes.
+
+We compare three methods: DML (partially linear regression with random forest nuisance estimation using 500 trees at max depth 5 and 5-fold cross-fitting), BCF (Bayesian Causal Forests [@hahn2020bayesian] with logistic regression propensity scores and MCMC posterior sampling), and GBC (a quantile neural network with cosine embedding, propensity score augmentation, and the three-part loss).
+
+```{python}
+#| eval: true
+#| code-fold: true
+#| label: tbl-lalonde-results
+#| tbl-cap: "Treatment effect estimates on the LaLonde dataset (log earnings, n=445). All three methods find positive treatment effects. DML reports a frequentist SE; BCF reports a Bayesian posterior SD; GBC reports the cross-quantile SD of the ATE across quantile levels."
+import pandas as pd
+
+data = {
+    'Method': ['DML (PLR)', 'BCF', 'GBC (IQN)'],
+    'ATE': [0.995, 0.778, 0.862],
+    'Uncertainty': ['0.393 (SE)', '0.410 (post. SD)', '0.350 (cross-q SD)'],
+    '95% Interval': ['[0.225, 1.764]', '[-0.004, 1.541]', '[0.180, 1.530]'],
+    'Time (sec)': [1.8, 396, 186]
+}
+df = pd.DataFrame(data)
+df.style.hide(axis='index').set_properties(**{'text-align': 'center'})
+```
+
+All three methods find a positive treatment effect. The DML estimate of 0.995 on the log scale corresponds to roughly $e^{0.995} - 1 \approx 170\%$; BCF yields 0.778 (118%); GBC estimates 0.862 (137%). The large percentage changes reflect the log transformation applied to a population with many zero-earnings control observations.
+
+BCF and GBC both provide individual-level CATE estimates, enabling us to examine whether treatment effects vary across subgroups.
+
+```{python}
+#| eval: true
+#| code-fold: true
+#| label: tbl-heterogeneity
+#| tbl-cap: "Heterogeneity in estimated treatment effects on the LaLonde data. Both BCF and GBC find that the top quartile benefits roughly 3x more than the bottom quartile."
+import pandas as pd
+import numpy as np
+
+data = {
+    'Subgroup': ['Overall', 'Top quartile', 'Bottom quartile',
+                 'High education', 'Low education'],
+    'BCF CATE': [0.78, 1.10, 0.51, 0.85, 0.68],
+    'BCF % change': ['118%', '200%', '67%', '134%', '97%'],
+    'GBC CATE': [0.86, 1.15, 0.55, 0.92, 0.78],
+    'GBC % change': ['136%', '216%', '73%', '151%', '118%'],
+}
+df = pd.DataFrame(data)
+df.style.hide(axis='index').set_properties(**{'text-align': 'center'})
+```
+
+Both methods find substantial heterogeneity. The top quartile of estimated CATEs shows roughly three times the percentage-change effect compared to the bottom quartile (200--216% vs. 67--73%). The education-based split reveals that individuals with above-median education benefit more from the training program---consistent with the human capital complementarity hypothesis: those with a basic educational foundation are better positioned to capitalize on job training.
+
+GBC reports higher CATE heterogeneity (SD = 0.52 vs. 0.24 for BCF) because the quantile treatment effects capture distributional variation in addition to covariate-driven heterogeneity.
+
+The distinctive contribution of GBC is the ability to examine how the treatment reshapes the *entire* outcome distribution. On the LaLonde data, we can ask: does the NSW program mainly help at the median, or does it also lift the lower tail (preventing zero earnings)?
+
+The quantile treatment effect profile $\widehat{\text{QTE}}(q)$ averaged over the sample reveals that the treatment effect is largest at low quantile levels ($q = 0.05$ to $0.3$), suggesting that the program's primary benefit is preventing the worst outcomes---moving individuals from zero earnings to positive earnings. At higher quantiles ($q > 0.7$), the effect is smaller: the program does not dramatically change outcomes for individuals who would have found employment anyway.
+
+This pattern---large effects in the lower tail, modest effects at the median and above---has profound policy implications. If the goal of the NSW program is to reduce poverty (a lower-tail objective), the QTE analysis suggests it is highly effective: it lifts the floor on earnings for the most disadvantaged workers. If the goal is to increase average productivity (a mean objective), the program is moderately effective. If the goal is to create high earners (an upper-tail objective), the program has little impact. These are three different policy questions, all answered by a single trained GBC model simply by evaluating the quantile function at different levels. No retraining is needed; no additional assumptions are required.
+
+This distributional insight is invisible to DML (which reports only a single ATE) and partially visible to BCF (which models the conditional *mean* treatment effect but not the conditional *distribution* of treatment effects across quantile levels).
+
+
+## Simulation Study {#sec-causal-simulation}
+
+To validate the GBC approach under controlled conditions, we design a simulation study with known ground truth. This allows us to assess the accuracy of CATE estimation---something we cannot do with the LaLonde data, where the true CATE is unknown. We generate $n = 1000$ observations with $p = 3$ covariates:
+
+```{python}
+#| eval: true
+#| code-fold: false
+#| output: false
+import numpy as np
+import torch
+import torch.nn as nn
+np.random.seed(42)
+
+n = 1000
+p = 3
+
+# Covariates
+X = np.random.uniform(0, 2, size=(n, p))
+
+# Propensity score: nonlinear function of covariates
+def true_propensity(X):
+    mu = -6 + (X[:, 0] > X[:, 1]).astype(float) + 6 * np.abs(X[:, 1] - 1)
+    return 1 / (1 + np.exp(-mu))
+
+e_true = true_propensity(X)
+Z = np.random.binomial(1, e_true)
+
+# True CATE: heterogeneous treatment effect
+def true_cate(X):
+    return 1.0 + 2.0 * np.sin(np.pi * X[:, 0] / 2) - 1.5 * X[:, 1]
+
+tau_true = true_cate(X)
+
+# Potential outcomes
+mu0 = 3 * X[:, 0] + 2 * X[:, 1]**2 - X[:, 2]
+Y0 = mu0 + np.random.normal(0, 1, n)
+Y1 = mu0 + tau_true + np.random.normal(0, 1, n)
+
+# Observed outcome
+Y = Z * Y1 + (1 - Z) * Y0
+
+print(f"Sample size: {n}")
+print(f"Treatment rate: {Z.mean():.3f}")
+print(f"True ATE: {tau_true.mean():.3f}")
+print(f"True CATE range: [{tau_true.min():.2f}, {tau_true.max():.2f}]")
+```
+
+This design features several realistic challenges: the treatment probability depends on an indicator function and an absolute value, producing extreme propensity scores near 0 and 1; the CATE depends on $X_0$ through a sine function and on $X_1$ linearly, creating rich heterogeneity; and the baseline outcome $\mu_0$ includes a squared term, giving a nonlinear response surface.
+
+We implement the GBC causal model step by step.
+
+*Step 1: Estimate the propensity score.*
+
+```{python}
+#| eval: true
+#| code-fold: false
+#| output: false
+# Convert to tensors
+X_tensor = torch.tensor(X, dtype=torch.float32)
+Z_tensor = torch.tensor(Z, dtype=torch.float32)
+Y_tensor = torch.tensor(Y, dtype=torch.float32)
+
+# Train propensity network
+prop_net = PropensityNet(input_dim=p, hidden_dim=64)
+optimizer = torch.optim.Adam(prop_net.parameters(), lr=0.001)
+loss_fn = nn.BCELoss()
+
+for epoch in range(500):
+    e_hat = prop_net(X_tensor)
+    loss = loss_fn(e_hat, Z_tensor)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+with torch.no_grad():
+    e_hat = prop_net(X_tensor).numpy()
+
+print(f"Propensity score range: [{e_hat.min():.3f}, {e_hat.max():.3f}]")
+print(f"Propensity correlation with truth: {np.corrcoef(e_true, e_hat)[0,1]:.3f}")
+```
+
+*Step 2: Train the causal IQN.*
+
+```{python}
+#| eval: true
+#| code-fold: false
+#| output: false
+
+class CosineEmbedding(nn.Module):
+    def __init__(self, M=64, d=128):
+        super().__init__()
+        self.M = M
+        self.fc = nn.Sequential(nn.Linear(M, d), nn.ReLU())
+
+    def forward(self, tau):
+        i = torch.arange(1, self.M + 1, dtype=torch.float32)
+        cos_features = torch.cos(torch.pi * tau.unsqueeze(-1) * i)
+        return self.fc(cos_features)
+
+
+class CausalIQN(nn.Module):
+    """IQN for causal inference with propensity augmentation."""
+    def __init__(self, input_dim, hidden_dim=128, M=64):
+        super().__init__()
+        # Covariate encoder: x, z, e(x)
+        self.x_encoder = nn.Sequential(
+            nn.Linear(input_dim + 2, hidden_dim),  # +2 for z and e(x)
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU()
+        )
+        # Quantile encoder
+        self.tau_encoder = CosineEmbedding(M=M, d=hidden_dim)
+        # Output head
+        self.head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1)
+        )
+
+    def forward(self, x, z, e, tau):
+        # Concatenate covariates with treatment and propensity
+        x_aug = torch.cat([x, z.unsqueeze(-1), e.unsqueeze(-1)], dim=-1)
+        h_x = self.x_encoder(x_aug)
+        h_tau = self.tau_encoder(tau)
+        h = h_x * h_tau  # multiplicative merge
+        return self.head(h).squeeze(-1)
+
+
+def pinball_loss(y, y_hat, tau):
+    """Check (pinball) loss for quantile regression."""
+    diff = y - y_hat
+    return torch.mean(torch.max(tau * diff, (tau - 1) * diff))
+
+
+# Training
+model = CausalIQN(input_dim=p, hidden_dim=128)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=2000)
+e_hat_tensor = torch.tensor(e_hat, dtype=torch.float32)
+
+losses = []
+for epoch in range(2000):
+    tau = torch.rand(n)
+    y_hat = model(X_tensor, Z_tensor, e_hat_tensor, tau)
+
+    # Two-part loss (propensity enters as input covariate, not in loss)
+    l_pinball = pinball_loss(Y_tensor, y_hat, tau)
+    l_mae = torch.mean(torch.abs(Y_tensor - model(
+        X_tensor, Z_tensor, e_hat_tensor,
+        0.5 * torch.ones(n))))
+    loss = l_pinball + 0.1 * l_mae
+
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    scheduler.step()
+    losses.append(loss.item())
+
+print(f"Final loss: {losses[-1]:.4f}")
+```
+
+*Step 3: Estimate CATE and QTE.*
+
+```{python}
+#| eval: true
+#| code-fold: false
+#| output: false
+# Estimate CATE by averaging QTE over quantile grid
+q_grid = torch.linspace(0.05, 0.95, 10)
+
+with torch.no_grad():
+    cate_hat = torch.zeros(n)
+    for q_val in q_grid:
+        tau_q = q_val * torch.ones(n)
+        y1_hat = model(X_tensor, torch.ones(n), e_hat_tensor, tau_q)
+        y0_hat = model(X_tensor, torch.zeros(n), e_hat_tensor, tau_q)
+        cate_hat += (y1_hat - y0_hat)
+    cate_hat /= len(q_grid)
+
+cate_hat_np = cate_hat.numpy()
+cate_rmse = np.sqrt(np.mean((cate_hat_np - tau_true)**2))
+cate_bias = np.mean(cate_hat_np) - np.mean(tau_true)
+
+print(f"True ATE:      {tau_true.mean():.3f}")
+print(f"Estimated ATE: {cate_hat_np.mean():.3f}")
+print(f"ATE bias:      {cate_bias:.3f}")
+print(f"CATE RMSE:     {cate_rmse:.3f}")
+print(f"CATE corr:     {np.corrcoef(tau_true, cate_hat_np)[0,1]:.3f}")
+```
+
+```{python}
+#| eval: true
+#| code-fold: true
+#| label: fig-cate-scatter
+#| fig-cap: "True vs. estimated CATE on the simulation study. Each point is one unit. The correlation indicates how well the GBC model captures the heterogeneity in treatment effects."
+import matplotlib.pyplot as plt
+
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+# Panel 1: True vs estimated CATE
+ax = axes[0]
+ax.scatter(tau_true, cate_hat_np, alpha=0.3, s=10, color='steelblue')
+lims = [min(tau_true.min(), cate_hat_np.min()) - 0.5,
+        max(tau_true.max(), cate_hat_np.max()) + 0.5]
+ax.plot(lims, lims, 'k--', alpha=0.5, label='45-degree line')
+ax.set_xlabel('True CATE')
+ax.set_ylabel('Estimated CATE')
+ax.set_title(f'CATE: RMSE = {cate_rmse:.3f}')
+ax.legend(fontsize=8)
+
+# Panel 2: QTE profile
+ax = axes[1]
+q_fine = torch.linspace(0.05, 0.95, 50)
+qte_profile = []
+with torch.no_grad():
+    for q_val in q_fine:
+        tau_q = q_val * torch.ones(n)
+        y1 = model(X_tensor, torch.ones(n), e_hat_tensor, tau_q)
+        y0 = model(X_tensor, torch.zeros(n), e_hat_tensor, tau_q)
+        qte_profile.append((y1 - y0).mean().item())
+
+ax.plot(q_fine.numpy(), qte_profile, 'b-', linewidth=2, label='Estimated QTE')
+ax.axhline(y=tau_true.mean(), color='r', linestyle='--', label=f'True ATE = {tau_true.mean():.2f}')
+ax.set_xlabel('Quantile level q')
+ax.set_ylabel('Average QTE(q)')
+ax.set_title('Quantile Treatment Effect Profile')
+ax.legend(fontsize=8)
+
+plt.tight_layout()
+plt.show()
+```
+
+@nareklishvili2026causal provide an extensive comparison on this simulation design. The key findings are:
+
+| Method | ATE | ATE Bias | CATE RMSE | Time (sec) |
+|--------|-----|----------|-----------|------------|
+| DML (PLR) | 2.636 | 1.711 | N/A | 2 |
+| BCF | 1.050 | 0.126 | 1.605 | 1155 |
+| GBC (IQN) | 1.400 | 0.475 | 1.372 | 89 |
+
+: Method comparison on simulated data ($n = 1000$, $p = 3$, population ATE = 1.0). DML's partially linear model assumption leads to large bias under this nonlinear design. BCF achieves the lowest ATE bias. GBC achieves the lowest CATE RMSE. {#tbl-sim-comparison}
+
+Several patterns emerge. DML suffers under nonlinearity: the partially linear model $Y = \theta D + g(X) + \varepsilon$ imposes a *constant* treatment effect, which is a severe misspecification when the true CATE is highly nonlinear, leading to an ATE bias of 1.711 (DML's interactive regression model would reduce this bias, but the standard PLR specification fails here). BCF excels at ATE, as the BART priors provide natural regularization and handle the near-violations of positivity gracefully, achieving the lowest ATE bias (0.126). GBC excels at CATE, with the quantile network capturing individual-level heterogeneity more effectively than BCF's tree-based approach (CATE RMSE of 1.372 vs. 1.605). Finally, GBC uniquely provides distributional information: the cross-quantile SD (0.841) captures genuine distributional heterogeneity in treatment effects---information that neither DML nor BCF provides.
+
+The practical takeaway from @tbl-sim-comparison is that no single method dominates across all metrics. If the analyst's primary goal is an unbiased ATE estimate with posterior uncertainty quantification, BCF is the best choice despite its computational cost. If the goal is individual-level treatment effect prediction or distributional analysis, GBC provides the richest output at an intermediate computational cost. If the goal is speed and simplicity for a one-time ATE estimate, DML remains attractive---provided the analyst is willing to accept the constant-effect assumption of the PLR specification or to use the more flexible IRM variant. The choice among these methods is ultimately a decision about what questions the analyst wants to answer, not a question of which method is universally "best."
+
+To validate the theoretical rate advantage of @sec-causal-dml, @nareklishvili2026causal designed a simulation with $p = 20$ observed covariates and $k = 3$ latent confounders. The results across sample sizes confirm the theoretical predictions:
+
+| $n$ | GBC RMSE | DML RMSE | DML/GBC Ratio |
+|----:|----------|----------|:-------------:|
+| 500 | 1.923 | 3.257 | 1.69 |
+| 1,000 | 1.764 | 2.458 | 1.39 |
+| 2,000 | 1.591 | 1.992 | 1.25 |
+| 5,000 | 1.490 | 1.496 | 1.00 |
+
+: GBC vs. DML under low-dimensional confounding ($k = 3$, $p = 20$). GBC dominates at moderate sample sizes; the advantage diminishes as $n$ grows because DML eventually learns the relevant features from abundant data. {#tbl-rate-validation}
+
+At $n = 500$, GBC achieves 41% lower RMSE than DML (ratio 1.69). By $n = 5{,}000$, the methods are tied (ratio 1.00). This is consistent with the theory: GBC's rate advantage is asymptotically growing, but finite-sample gains are modulated by the accuracy of the dimension reduction step. An "oracle" GBC that uses the true latent confounders maintains a 3.2x advantage even at $n = 5{,}000$, suggesting that improved dimension reduction is the key bottleneck.
+
+
+## Simulation with Distributional Treatment Effects {#sec-causal-dist-sim}
+
+The simulation in @sec-causal-simulation used a design where the treatment shifted the mean of the outcome distribution but left the variance unchanged. In many real applications, treatment affects not only the location but also the *shape* of the outcome distribution. A drug might reduce average blood pressure (a location shift) while also reducing the variability of blood pressure readings (a scale change). A job training program might have a modest average effect but dramatically reduce the probability of zero earnings (a distributional change concentrated in the lower tail). To demonstrate that GBC recovers these richer treatment effects, we design a simulation where the true treatment effect varies across the outcome distribution.
+
+We generate data with $n = 2000$ observations where the treatment shifts the mean by an amount that depends on $X_0$, and also changes the conditional variance of the outcome. Specifically, the treated outcome has higher variance for units with large $X_0$, creating a QTE curve that varies with the quantile level even after conditioning on covariates.
+
+```{python}
+#| eval: true
+#| code-fold: false
+#| output: false
+import numpy as np
+import torch
+import torch.nn as nn
+np.random.seed(123)
+
+n_dist = 2000
+p_dist = 2
+
+# Covariates
+X_dist = np.random.uniform(0, 2, size=(n_dist, p_dist))
+
+# Propensity: moderate confounding
+e_dist = 1 / (1 + np.exp(-1.5 * (X_dist[:, 0] - 1)))
+Z_dist = np.random.binomial(1, e_dist)
+
+# True CATE (mean shift): depends on X_0
+true_cate_dist = 2.0 * X_dist[:, 0]
+
+# Control outcomes: fixed variance
+mu0_dist = 3 * X_dist[:, 0] + X_dist[:, 1]
+eps0 = np.random.normal(0, 1, n_dist)
+Y0_dist = mu0_dist + eps0
+
+# Treated outcomes: mean shift + variance that grows with X_0
+eps1 = np.random.normal(0, 1, n_dist)
+sigma_treated = 1.0 + 1.5 * X_dist[:, 0]  # heteroskedastic treated arm
+Y1_dist = mu0_dist + true_cate_dist + sigma_treated * eps1
+
+Y_dist = Z_dist * Y1_dist + (1 - Z_dist) * Y0_dist
+
+# True QTE at quantile q for covariate x0: shift + scale effect
+# Q_{Y(1)}(q | x) - Q_{Y(0)}(q | x) = cate(x) + (sigma_treated - 1) * Phi^{-1}(q)
+from scipy.stats import norm
+q_grid_fine = np.linspace(0.05, 0.95, 50)
+
+# For x0 = 0.5: cate = 1.0, sigma_1 = 1.75, scale_diff = 0.75
+qte_x0_low = 2.0 * 0.5 + (1.0 + 1.5 * 0.5 - 1.0) * norm.ppf(q_grid_fine)
+# For x0 = 1.5: cate = 3.0, sigma_1 = 3.25, scale_diff = 2.25
+qte_x0_high = 2.0 * 1.5 + (1.0 + 1.5 * 1.5 - 1.0) * norm.ppf(q_grid_fine)
+
+print(f"True ATE: {true_cate_dist.mean():.3f}")
+print(f"True CATE at x0=0.5: {2.0 * 0.5:.1f}, QTE range: [{qte_x0_low.min():.2f}, {qte_x0_low.max():.2f}]")
+print(f"True CATE at x0=1.5: {2.0 * 1.5:.1f}, QTE range: [{qte_x0_high.min():.2f}, {qte_x0_high.max():.2f}]")
+```
+
+The key feature of this design is that the true QTE at quantile level $q$ for a unit with covariate $X_0 = x_0$ is
+$$
+\text{QTE}(q, x_0) = 2 x_0 + 1.5 x_0 \cdot \Phi^{-1}(q),
+$$ {#eq-true-qte-dist}
+where $\Phi^{-1}$ is the standard normal quantile function. The first term is the mean shift (the CATE), and the second term captures the variance effect. At $q = 0.5$, $\Phi^{-1}(0.5) = 0$, so the QTE at the median equals the CATE. At $q = 0.1$, $\Phi^{-1}(0.1) \approx -1.28$, so the QTE is *below* the CATE---the treatment makes the lower tail worse relative to a pure location shift. At $q = 0.9$, the QTE is above the CATE. This V-shaped QTE profile around the CATE is the signature of a variance-increasing treatment, and it is invisible to any method that estimates only the conditional mean.
+
+```{python}
+#| eval: true
+#| code-fold: true
+#| label: fig-true-qte-dist
+#| fig-cap: "True quantile treatment effects for units with low ($X_0 = 0.5$) and high ($X_0 = 1.5$) covariate values. The treatment shifts both the mean and the variance of the outcome. At higher $X_0$, the variance effect is larger, producing a steeper QTE curve. The dashed horizontal lines show the CATE (the mean of each QTE curve), which captures only the location shift."
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(1, 1, figsize=(7, 4))
+ax.plot(q_grid_fine, qte_x0_low, 'b-', linewidth=2, label=r'$X_0 = 0.5$ (true QTE)')
+ax.plot(q_grid_fine, qte_x0_high, 'r-', linewidth=2, label=r'$X_0 = 1.5$ (true QTE)')
+ax.axhline(y=1.0, color='b', linestyle='--', alpha=0.5, label=r'CATE at $X_0 = 0.5$')
+ax.axhline(y=3.0, color='r', linestyle='--', alpha=0.5, label=r'CATE at $X_0 = 1.5$')
+ax.set_xlabel('Quantile level $q$')
+ax.set_ylabel('QTE$(q, x_0)$')
+ax.set_title('True Quantile Treatment Effects with Variance Heterogeneity')
+ax.legend(fontsize=8)
+plt.tight_layout()
+plt.show()
+```
+
+@fig-true-qte-dist reveals the full story that the CATE alone cannot tell. For a unit with $X_0 = 1.5$, the CATE of 3.0 is a reasonable summary of the location shift, but it conceals the fact that the treatment dramatically increases outcome variability. At the 10th percentile, the treatment effect is only about $-0.7$---the treatment actually *worsens* outcomes for the unluckiest individuals. At the 90th percentile, the effect is around $6.7$---nearly twice the CATE. A policymaker who cares about protecting the worst-off would view this treatment very differently from one who cares only about the average. The CATE, by construction, is silent on this distinction.
+
+This simulation illustrates a general principle: whenever a treatment changes both the location and the scale (or shape) of the conditional outcome distribution, the QTE curve will be non-constant across quantile levels. A flat QTE curve indicates a pure location shift---the treatment moves the entire distribution by the same amount. A positively sloped QTE curve (increasing in $q$) indicates that the treatment increases the spread of outcomes, as in our design. A negatively sloped QTE curve indicates that the treatment *compresses* the outcome distribution, reducing variability. In medical applications, a treatment that reduces both the average severity of symptoms and the variability of outcomes would produce a negatively sloped QTE curve---precisely the kind of treatment that clinicians value most, because it is both effective on average and reliable across patients.
+
+DML and BCF would report the CATE of 1.0 and 3.0 for the two covariate values, correctly capturing the mean shift. But they would miss the variance effect entirely. Neither method has a mechanism for detecting that the treatment increases outcome variability, because they model only the conditional mean of the outcome. GBC, by learning the full conditional quantile function, automatically captures both location and scale effects in a single trained model.
+
+
+## Distributional Treatment Effects {#sec-causal-distributional}
+
+The QTE profile $\text{QTE}(q, x)$ provides a function-valued summary of how treatment reshapes the outcome distribution at each covariate value. But sometimes we want a single scalar that captures how *different* the treated and control distributions are, going beyond the comparison of matched quantiles.
+
+The natural tool for this comparison is the *Wasserstein distance* from optimal transport theory. The $p$-Wasserstein distance between two distributions $P$ and $Q$ on $\mathbb{R}$ is
+$$
+W_p(P, Q) = \left( \inf_{\gamma \in \Gamma(P, Q)} \int |x - y|^p \, d\gamma(x, y) \right)^{1/p},
+$$ {#eq-wasserstein}
+where $\Gamma(P, Q)$ is the set of all joint distributions (couplings) with marginals $P$ and $Q$. For distributions on the real line, the Wasserstein distance has a beautiful closed-form expression in terms of quantile functions:
+$$
+W_p(P, Q) = \left( \int_0^1 |Q_P(q) - Q_Q(q)|^p \, dq \right)^{1/p}.
+$$ {#eq-wasserstein-quantile}
+This is a direct consequence of the optimality of the comonotone coupling in one dimension [@villani2009optimal].
+
+For causal inference, we define the *conditional distributional treatment effect* (CDTE) at covariate value $x$ as
+$$
+\text{CDTE}(x) = W_2(F_{Y(1) \mid x}, F_{Y(0) \mid x}) = \left( \int_0^1 \text{QTE}(q, x)^2 \, dq \right)^{1/2}.
+$$ {#eq-cdte}
+The CDTE measures the total distributional shift induced by the treatment, capturing both location and scale changes in a single number. Notice that $\text{CDTE}(x)^2 = \text{CATE}(x)^2 + \text{Var}_q[\text{QTE}(q, x)]$ by the bias-variance decomposition: the squared Wasserstein distance decomposes into the squared mean shift (the CATE) plus the variance of the QTE across quantile levels, where the variance is computed with respect to the uniform measure on $[0,1]$: $\text{Var}_q[\text{QTE}] = \int_0^1 \text{QTE}(q,x)^2 \, dq - \left(\int_0^1 \text{QTE}(q,x) \, dq\right)^2$. When the treatment is a pure location shift ($\text{QTE}(q, x) = \text{CATE}(x)$ for all $q$), the variance term vanishes and $\text{CDTE}(x) = |\text{CATE}(x)|$. When the treatment also changes the shape of the distribution, the CDTE exceeds $|\text{CATE}(x)|$ by an amount that reflects the magnitude of the distributional distortion.
+
+The decomposition $\text{CDTE}^2 = \text{CATE}^2 + \text{Var}_q[\text{QTE}]$ provides a natural diagnostic for whether CATE-based methods are sufficient. If the ratio $\text{Var}_q[\text{QTE}] / \text{CDTE}^2$ is small across the covariate space, then the treatment is approximately a location shift, and CATE-based methods like DML and BCF capture most of the treatment effect. If the ratio is large, distributional methods like GBC provide strictly more information.
+
+The GBC framework computes the CDTE at no additional cost beyond training the IQN. Given the trained quantile function $\hat{Q}(q, \tilde{x}, z)$, we estimate
+$$
+\widehat{\text{CDTE}}(x) = \left( \frac{1}{|\mathcal{U}|} \sum_{q \in \mathcal{U}} \widehat{\text{QTE}}(q, x)^2 \right)^{1/2},
+$$
+where $\mathcal{U}$ is a grid of quantile levels. The *average distributional treatment effect* (ADTE) aggregates over the population: $\text{ADTE} = E_X[\text{CDTE}(X)]$. When the ADTE substantially exceeds the $|\text{ATE}|$, we know that the treatment has important distributional consequences beyond the mean shift. This diagnostic is unique to GBC among the three methods we compare: DML cannot compute it because it estimates only the conditional mean, and BCF provides posterior distributions over the mean treatment effect but not over the quantile treatment effect.
+
+The connection to optimal transport runs deeper than notation. The quantile function learned by the IQN is precisely a transport map from $\text{Uniform}(0,1)$ to the conditional outcome distribution. The difference of two such maps---the QTE---describes how to *transport* the control distribution into the treated distribution. In one dimension, this transport map is unique and given by $T(y) = Q_{Y(1) \mid x}(F_{Y(0) \mid x}(y))$, which pushes each control outcome to its corresponding treated outcome through quantile matching. The Wasserstein distance is the cost of this transport under quadratic cost, and the GBC framework computes it as a by-product of the quantile function evaluation.
+
+This optimal transport perspective also connects GBC to the growing literature on counterfactual distributions in economics [@chernozhukov2013inference]. The counterfactual distribution---"what would the wage distribution look like if we applied the returns structure of group A to the covariate distribution of group B?"---is precisely the pushforward of one distribution through the transport map learned by the other group's quantile function. GBC provides these counterfactual distributions as a direct output, enabling decompositions of distributional differences into composition effects (different covariates) and structural effects (different quantile functions) in the tradition of @machado2005counterfactual.
+
+
+## Exercises {#sec-causal-exercises}
+
+The first four exercises focus on the mechanics of causal estimation:
+propensity weighting, quantile treatment effects, sensitivity analysis,
+and empirical benchmarking on the LaLonde data.
+The last four exercises explore distributional treatment effects,
+DML implementation, rank preservation, and risk-sensitive
+treatment assignment.
+
+::: {#exr-causal-ipw}
+**IPW Estimator.**
+Consider the IPW estimator for the ATE:
+$$
+\hat{\tau}_{\text{IPW}} = \frac{1}{n} \sum_{i=1}^n \left[ \frac{Z_i Y_i}{\hat{e}(X_i)} - \frac{(1-Z_i) Y_i}{1 - \hat{e}(X_i)} \right].
+$$
+(a) Show that $E[\hat{\tau}_{\text{IPW}}] = \tau_0$ under unconfoundedness and correct propensity specification.
+(b) Using the simulation from @sec-causal-simulation, compute the IPW estimator with the true propensity scores $e(X_i)$ and with the estimated $\hat{e}(X_i)$. Compare the variance of the two estimators.
+(c) What happens to the IPW estimator when $e(X_i)$ is very close to 0 or 1? Compute the IPW estimate after trimming observations with $\hat{e}(X_i) < 0.05$ or $\hat{e}(X_i) > 0.95$. Compare with the untrimmed estimate.
+:::
+
+::: {#exr-causal-qte}
+**Quantile Treatment Effects.**
+Modify the simulation in @sec-causal-simulation so that the treatment affects not only the mean but also the variance of the outcome:
+$$
+Y_i(1) = \mu_0(X_i) + \tau(X_i) + (1 + 0.5 X_{i,0}) \cdot \varepsilon_i, \quad Y_i(0) = \mu_0(X_i) + \varepsilon_i,
+$$
+where $\varepsilon_i \sim N(0, 1)$. In this design, the treatment increases the spread of outcomes for units with large $X_0$.
+(a) Train a GBC model and plot the QTE profile $\widehat{\text{QTE}}(q)$ for individuals with $X_0 = 0.5$ and $X_0 = 1.5$. How do they differ?
+(b) Compute the CATE from the QTE by integration. Verify that it matches the direct mean-based CATE.
+(c) Can DML or BCF detect the variance effect? Explain why or why not.
+:::
+
+::: {#exr-causal-propensity}
+**Propensity Score Sensitivity.**
+Using the simulation design from @sec-causal-simulation:
+(a) Estimate the propensity score using three methods: (i) logistic regression, (ii) a neural network with one hidden layer, and (iii) a neural network with three hidden layers. For each, compute the CATE RMSE of the downstream GBC model.
+(b) Deliberately misspecify the propensity model by omitting $X_1$ from the inputs. How does this affect the CATE estimates? Does the GBC model partially compensate for the misspecification through the outcome model?
+(c) The semiparametric efficiency result (Proposition 13.1) requires the product of the propensity and outcome convergence rates to be $o(n^{-1/2})$. Generate data with $n = 200, 500, 1000, 2000$ and plot the CATE RMSE as a function of $n$ for the correctly specified and misspecified propensity models. At what sample size does the misspecification penalty become negligible?
+:::
+
+::: {#exr-causal-lalonde}
+**LaLonde Extensions.**
+The LaLonde dataset from @sec-causal-lalonde can be accessed via the `causalml` Python package or downloaded from the Dehejia--Wahba webpage.
+(a) Implement the GBC causal model from Algorithm 13.1 on the LaLonde data. Use log-transformed earnings $\log(\text{re78} + 1)$ as the outcome. Report the ATE, a 95% quantile interval, and the QTE profile.
+(b) Conduct a *placebo test*: use pre-treatment earnings $\text{re74}$ as the outcome variable. Since the training program had not yet begun, the treatment effect should be approximately zero. Does your GBC model correctly find a null effect?
+(c) Compute individual-level CATE estimates and identify the subgroup that benefits most from the program. Which covariates are most predictive of large treatment effects?
+:::
+
+::: {#exr-causal-wasserstein}
+**Distributional Treatment Effects.**
+Using the simulation from @sec-causal-dist-sim with heteroskedastic treatment effects:
+(a) Compute the estimated CDTE $\widehat{\text{CDTE}}(x)$ for each unit using the trained GBC model from @sec-causal-simulation. Plot the CDTE against the absolute CATE. For which units does the CDTE substantially exceed $|\text{CATE}|$? Relate this to the variance heterogeneity in the data-generating process.
+(b) Compute the Wasserstein-2 distance between the treated and control outcome distributions using the quantile formula (@eq-wasserstein-quantile) and a grid of 100 quantile levels. Compare with a naive estimate that computes $|\bar{Y}_{\text{treated}} - \bar{Y}_{\text{control}}|$ (the absolute difference in means). By how much does the Wasserstein distance exceed the mean difference?
+(c) The decomposition $\text{CDTE}^2 = \text{CATE}^2 + \text{Var}_q[\text{QTE}]$ allows us to measure the fraction of the distributional effect attributable to scale changes rather than location shifts. Compute this fraction for units at $X_0 = 0.5$ and $X_0 = 1.5$. At which covariate value is the scale effect more important relative to the location effect?
+:::
+
+::: {#exr-causal-dml-compare}
+**DML Two-Stage Procedure.**
+Implement the DML partially linear regression model from scratch (without using the `doubleml` package) on the simulation from @sec-causal-simulation.
+(a) In the first stage, fit a random forest to predict $Y$ from $X$ (the outcome nuisance function $\hat{g}$) and another random forest to predict $Z$ from $X$ (the propensity nuisance function $\hat{m}$). Use 5-fold cross-fitting: for each fold, train on the other 4 folds and predict on the held-out fold. Compute the outcome residuals $\tilde{Y}_i = Y_i - \hat{g}(X_i)$ and the treatment residuals $\tilde{Z}_i = Z_i - \hat{m}(X_i)$.
+(b) In the second stage, regress $\tilde{Y}$ on $\tilde{Z}$ using OLS to obtain $\hat{\theta}_{\text{DML}}$. Report the point estimate and its standard error. Compare with the true ATE. Explain why the PLR specification yields a biased estimate under the nonlinear CATE design.
+(c) Now implement DML's interactive regression model (IRM) by estimating $\hat{\mu}(x, z) = \hat{E}[Y \mid X = x, Z = z]$ separately for $z = 0$ and $z = 1$ using random forests. Compute the CATE as $\hat{\tau}_{\text{IRM}}(x) = \hat{\mu}(x, 1) - \hat{\mu}(x, 0)$. How does the IRM CATE RMSE compare with GBC's?
+:::
+
+::: {#exr-causal-rank}
+**Rank Preservation and QTE Interpretation.**
+The interpretive caveat in @sec-causal-cate warns that $\text{QTE}(q, x) \neq Q_{Y(1) - Y(0)}(q \mid x)$ in general. This exercise explores when the two quantities coincide and what happens when they diverge.
+(a) Generate data under *rank preservation*: for each unit, draw a single $\varepsilon_i \sim N(0,1)$ and set $Y_i(0) = \mu_0(X_i) + \varepsilon_i$ and $Y_i(1) = \mu_0(X_i) + \tau(X_i) + \varepsilon_i$. Under this design, the rank of unit $i$ in the control distribution is the same as its rank in the treated distribution. Verify numerically that $\text{QTE}(q, x) = Q_{Y(1) - Y(0)}(q \mid x) = \tau(x)$ for all $q$ (i.e., the QTE is flat and equals the CATE).
+(b) Now break rank preservation: set $Y_i(1) = \mu_0(X_i) + \tau(X_i) + (1 + X_{i,0}) \varepsilon_i'$ where $\varepsilon_i'$ is drawn *independently* of $\varepsilon_i$. Compute both $\text{QTE}(q, x)$ and $Q_{Y(1) - Y(0)}(q \mid x)$ from the population distributions. Plot both curves and show that they differ.
+(c) In practice, we never observe both potential outcomes, so we cannot distinguish between rank preservation and rank reversal from data alone. Discuss the implications for interpreting QTE estimates in a policy context: what can a policymaker conclude from a QTE profile, and what requires additional assumptions?
+:::
+
+::: {#exr-causal-cvar}
+**Risk-Sensitive Treatment Assignment.**
+The connection between GBC and Yaari's dual theory (@sec-causal-distributional) suggests that risk-averse policymakers should evaluate treatments using distorted expectations rather than the standard ATE.
+(a) Using the trained GBC model from @sec-causal-simulation, compute the CVaR-based treatment effect at level $\eta = 0.2$: average the QTE over only the bottom 20% of quantile levels, $\widehat{\text{QTE}}_{\text{CVaR}} = 5 \int_0^{0.2} \widehat{\text{QTE}}(q, x) \, dq$. Compare this with the standard CATE (the average over all quantile levels). For which covariate values does the CVaR treatment effect differ most from the CATE?
+(b) Design a treatment assignment policy that maximizes the CVaR-based welfare: assign treatment to units where $\widehat{\text{QTE}}_{\text{CVaR}}(x) > 0$ (the treatment improves the worst outcomes). Compare this policy with the standard policy that assigns treatment where $\hat{\tau}(x) > 0$ (the CATE is positive). What fraction of units receive different assignments under the two policies?
+(c) Compute the population welfare under both policies using the true potential outcomes. Which policy achieves higher average welfare? Which achieves higher welfare for the bottom 20% of outcomes? Discuss the equity-efficiency tradeoff.
+:::

@@ -1,0 +1,96 @@
+project:
+  type: book
+  output-dir: _book
+
+book:
+  title: "Generative Bayesian Computation"
+  subtitle: "Quantile Neural Networks for Inference and Surrogates"
+  author:
+    - name: Nick Polson
+      affiliation: University of Chicago
+    - name: Vadim Sokolov
+      affiliation: George Mason University
+  date: today
+  chapters:
+    - index.qmd
+    - part: "Foundations"
+      chapters:
+        - ch01-introduction.qmd
+        - ch02-datasets.qmd
+        - ch03-quantiles.qmd
+        - ch04-noise-outsourcing.qmd
+        - ch05-iqn.qmd
+    - part: "From RL to Surrogates"
+      chapters:
+        - ch06-distributional-rl.qmd
+        - ch07-surrogates.qmd
+        - ch08-jumps.qmd
+        - ch09-active-learning.qmd
+    - part: "Inference and Applications"
+      chapters:
+        - ch10-bayesian-inference.qmd
+        - ch11-prediction.qmd
+        - ch12-meu.qmd
+        - ch13-causal.qmd
+        - ch14-calibration.qmd
+    - references.qmd
+  appendices:
+    - appendix-a-proofs.qmd
+    - appendix-b-computing.qmd
+
+bibliography: references.bib
+
+filters:
+  - filters/mermaid-width.lua
+  - filters/fold-long-code.lua
+
+format:
+  html:
+    theme:
+      light: cosmo
+    mermaid:
+      theme: neutral
+    code-fold: false
+    code-tools: true
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    number-sections: true
+    number-depth: 3
+    link-citations: true
+    html-math-method: mathjax
+    css: style/custom.css
+  pdf:
+    documentclass: scrreprt
+    papersize: letter
+    fontsize: 11pt
+    mainfont: "TeX Gyre Pagella"
+    geometry:
+      - margin=1in
+    number-sections: true
+    number-depth: 3
+    keep-tex: true
+    include-in-header:
+      text: |
+        \usepackage{amsmath,amssymb,amsthm,booktabs}
+        \usepackage{needspace}
+        \BeforeBeginEnvironment{tcolorbox}{\needspace{5\baselineskip}}
+        \newtheorem{theorem}{Theorem}[chapter]
+        \newtheorem{definition}[theorem]{Definition}
+        \newtheorem{lemma}[theorem]{Lemma}
+        \newtheorem{corollary}[theorem]{Corollary}
+
+execute:
+  freeze: auto
+  cache: true
+  fig-width: 7
+  fig-height: 4
+
+jupyter: python3
+
+crossref:
+  chapters: true
+  eq-prefix: "Eq."
+  fig-prefix: "Figure"
+  tbl-prefix: "Table"
+  thm-prefix: "Theorem"

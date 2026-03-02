@@ -1,0 +1,655 @@
+# Distributional Reinforcement Learning {#sec-dist-rl}
+
+The implicit quantile network that we developed in @sec-iqn did not originate in statistics. It was invented for *distributional reinforcement learning* (distributional RL) --- a paradigm that replaces the scalar value function of classical RL with an entire probability distribution over future returns [@bellemare2017distributional; @bellemare2023distributional]. Understanding this origin is important for two reasons. First, the theoretical foundations of IQN --- Wasserstein contraction, quantile temporal-difference learning, and the implicit parameterization --- are best understood in the RL setting. Second, the bridge from distributional RL to GBC reveals a deep structural analogy: both frameworks learn conditional distributions by optimizing the pinball loss with cosine-embedded quantile inputs.
+
+This chapter tells the story of distributional RL and builds the bridge to GBC. We start with the random-variable Bellman equation (@sec-rl-bellman), prove the Wasserstein contraction property (@sec-rl-wasserstein), trace the evolution from categorical to implicit representations (@sec-rl-qrdqn-iqn), and show how the return distribution enables risk-sensitive control (@sec-rl-cvar). We conclude by making the bridge to GBC explicit (@sec-rl-bridge).
+
+The reader who is already familiar with reinforcement learning can skim @sec-rl-bellman and proceed directly to @sec-rl-wasserstein. The reader who has never encountered RL should take the time to absorb the MDP formalism and the Bellman equation, as these provide the language for the rest of the chapter. Regardless of background, the punchline is in @sec-rl-bridge: the IQN architecture that was invented for Atari games is exactly the architecture that powers GBC.
+
+Before we begin, a word about the relationship between this chapter and the Distributional Reinforcement Learning book by @bellemare2023distributional. That book is a comprehensive treatment of distributional RL in its own right, covering topics (linear function approximation, signed distributions, multiagent RL, computational neuroscience) that we do not touch here. Our goal is narrower: we want to extract from distributional RL exactly the ideas that GBC needs, explain them in the language of statistics and quantile functions, and build the bridge to the rest of this book. We refer the interested reader to Bellemare, Dabney, and Rowland's text for the full story.
+Their book is an excellent companion to this chapter and provides the detailed proofs that we only sketch here.
+
+
+## The Random-Variable Bellman Equation {#sec-rl-bellman}
+
+This section introduces the Markov decision process (MDP) and the Bellman equation, then shows how replacing scalar expectations with full distributions leads to the distributional Bellman equation --- the foundation of everything that follows in this chapter and, by extension, the foundation of IQN's quantile-based architecture.
+
+Before we dive into the mathematics, let us build some intuition about what reinforcement learning is trying to accomplish. Imagine a robot navigating a grid-world: at each time step, the robot observes its position (the *state*), chooses whether to move north, south, east, or west (the *action*), receives some reward or penalty depending on where it ends up, and then finds itself in a new position. The robot's goal is to learn a strategy --- a *policy* --- that accumulates the most reward over time. The challenge is that the robot does not know the map in advance; it must learn from trial and error which sequences of actions lead to high total reward.
+
+This same structure appears in remarkably diverse settings. In an Atari video game, the state is the screen of pixels, the actions are joystick movements, and the reward is the change in score. In portfolio management, the state is the current market condition, the action is the allocation across assets, and the reward is the daily profit or loss. In clinical trials, the state is a patient's health profile, the action is the treatment assignment, and the reward is the improvement in health outcome. In energy grid management, the state is the current demand and supply profile, the action is the allocation of power sources, and the reward is the cost savings or reliability improvement.
+In robotics, the state is the configuration of joints and sensors, the action is the torque applied to each motor, and the reward is a measure of task completion (did the arm grasp the object? did the quadruped walk forward?). What unifies all these problems is the sequential interaction between an agent and an environment, with delayed and uncertain feedback. The agent does not know the rules of the game in advance; it must discover them through experience. And crucially, the feedback from each action is *delayed*: a good move in chess may not pay off until dozens of moves later, and a poor investment decision may not reveal its consequences for months or years.
+
+The mathematical language for this interaction is the *Markov decision process* (MDP). The MDP was formalized by @bellman1957dynamic in the 1950s and has since become the standard framework for sequential decision-making under uncertainty. We now introduce the formalism precisely. An MDP is a tuple $(\mathcal{X}, \mathcal{A}, P, R, \gamma)$ where $\mathcal{X}$ is the state space, $\mathcal{A}$ is the action space, $P(x' \mid x, a)$ is the transition kernel governing the probability of reaching state $x'$ after taking action $a$ in state $x$, $R(x, a)$ is the reward distribution describing the immediate feedback, and $\gamma \in [0, 1)$ is the discount factor that trades off present versus future rewards. A policy $\pi : \mathcal{X} \to \mathcal{P}(\mathcal{A})$ maps states to distributions over actions; a *deterministic* policy maps each state to a single action, while a *stochastic* policy randomizes over actions and can be useful for exploration.
+
+The "Markov" in the name refers to the crucial assumption that the future depends only on the current state and action, not on the entire history of past states and actions. Formally, $P(x_{t+1} \mid x_t, a_t) = P(x_{t+1} \mid x_0, a_0, \ldots, x_t, a_t)$: the transition probability is the same whether or not we condition on the full history. This memoryless property is what makes the problem tractable: the agent need only consider where it is now, not how it got there. Of course, the Markov assumption is a modeling choice, not a law of nature. In practice, we can often *make* the state Markov by including sufficient history in the state representation --- for example, in Atari games, the state is a stack of the last four video frames rather than a single frame, which captures velocity information that a single frame would miss.
+
+The *state-action value function* under policy $\pi$ is
+$$
+Q^\pi(x, a) = \mathbb{E}_\pi\left[\sum_{t=0}^{\infty} \gamma^t R_t \;\middle|\; X_0 = x, A_0 = a\right],
+$$ {#eq-q-function}
+where the expectation is over the random trajectory $(X_0, A_0, R_0, X_1, A_1, R_1, \ldots)$ generated by the policy and environment. The discount factor $\gamma$ downweights future rewards: a reward received $t$ steps in the future is worth $\gamma^t$ times its face value today. This ensures the infinite sum converges (as long as rewards are bounded) and encodes a preference for sooner rather than later. The choice of $\gamma$ has a large effect on behavior: with $\gamma = 0$, the agent is completely myopic and maximizes only the immediate reward; with $\gamma = 0.99$, the agent values a reward 100 steps in the future at about $0.99^{100} \approx 0.37$ of its face value, making it genuinely long-sighted. In typical RL applications, $\gamma$ is set between 0.9 and 0.999. The *Bellman equation* states that $Q^\pi$ satisfies the fixed-point equation
+$$
+Q^\pi(x, a) = \mathbb{E}\bigl[R + \gamma \, Q^\pi(X', A')\bigr],
+$$ {#eq-bellman-scalar}
+where $R \sim R(x, a)$, $X' \sim P(\cdot \mid x, a)$, and $A' \sim \pi(\cdot \mid X')$. This is the foundation of Q-learning [@sutton2018reinforcement]: by iterating the Bellman operator, we converge to $Q^\pi$. The equation has a beautiful recursive structure --- the value of being in a state equals the expected immediate reward plus the discounted value of the next state --- and this recursion is the engine that powers virtually all of reinforcement learning.
+
+But $Q^\pi(x, a)$ is just the *mean* of the return distribution. The actual return is a random variable:
+$$
+Z^\pi(x, a) = \sum_{t=0}^{\infty} \gamma^t R_t \;\bigg|\; X_0 = x, A_0 = a.
+$$
+Classical RL discards all the distributional information in $Z^\pi$ and works only with its expectation $Q^\pi = \mathbb{E}[Z^\pi]$. This is analogous to summarizing a stock's performance by its average annual return alone, ignoring volatility, skewness, and tail risk.
+The average return is useful, but it is a dangerously incomplete picture. The insight of @bellemare2017distributional is to work directly with the random variable $Z^\pi$, learning its entire distribution rather than just its mean. This is the distributional approach to RL, and it is the starting point for the connection to GBC.
+
+::: {.callout-tip appearance="simple" title="Definition 6.1: Distributional Bellman Equation"}
+The **distributional Bellman equation** states that
+$$
+Z^\pi(x, a) \overset{d}{=} R + \gamma \, Z^\pi(X', A'),
+$$ {#eq-bellman-distributional}
+where $\overset{d}{=}$ denotes equality in distribution. The operator $\mathcal{T}^\pi$ defined by the right-hand side is called the *distributional Bellman operator*.
+:::
+
+This is a remarkable equation. It says that the *distribution* of the return satisfies a self-consistency condition: the distribution of $Z^\pi(x, a)$ is the same as the distribution of the immediate reward plus the discounted future return. Note the crucial difference from @eq-bellman-scalar: there, the Bellman equation is a scalar fixed-point equation for expectations. Here, it is a fixed-point equation for *probability distributions*. The scalar Bellman equation lives in $\mathbb{R}^{|\mathcal{X}||\mathcal{A}|}$; the distributional Bellman equation lives in the space of probability measures $\mathcal{P}(\mathbb{R})^{|\mathcal{X}||\mathcal{A}|}$. This is a much richer object, and learning it requires correspondingly richer representations --- which is precisely what IQN provides.
+
+To appreciate how different the distributional perspective is from the classical one, consider what information is lost when we reduce $Z^\pi(x, a)$ to its mean $Q^\pi(x, a)$. Two state-action pairs can have the same $Q^\pi$ value but wildly different return distributions: one might have a tight distribution centered on $Q^\pi$, while the other has a bimodal distribution with catastrophic and excellent outcomes that happen to average out to the same $Q^\pi$. A risk-neutral agent treats these as identical; a risk-sensitive agent (or a human decision-maker) would strongly prefer the former. The distributional Bellman equation preserves all of this information, and the algorithms we develop in this chapter (C51, QR-DQN, IQN) provide practical ways to learn and represent it.
+
+To make this concrete, consider a simple two-state MDP.
+
+::: {#exm-two-state}
+## Two-state MDP
+Let $\mathcal{X} = \{A, B\}$, $\mathcal{A} = \{a\}$ (single action), with deterministic transitions $A \to B \to A \to \cdots$ and rewards $R(A, a) = +1$, $R(B, a) = 0$. With $\gamma = 0.9$, the expected return from state $A$ is
+$$
+Q^\pi(A, a) = 1 + 0 \cdot \gamma + 1 \cdot \gamma^2 + 0 \cdot \gamma^3 + \cdots = \frac{1}{1 - \gamma^2} \approx 5.26.
+$$
+But the actual return from state $A$ is the *deterministic* value $5.26$---there is no randomness because both rewards and transitions are deterministic. The distribution $Z^\pi(A, a)$ is a point mass at $5.26$.
+
+Now suppose the reward at state $A$ is stochastic: $R(A, a) \sim \text{Bernoulli}(0.5)$, taking value $+2$ or $0$ with equal probability. Then $Z^\pi(A, a)$ is no longer a point mass --- it is a distribution that reflects the compounding randomness of future rewards. The mean return is still $Q^\pi(A, a) = 1/(1 - \gamma^2) \approx 5.26$, but now there is genuine uncertainty around this mean. The return distribution has standard deviation $\sigma_Z \approx 1.53$ and its quantile function is non-trivial: the 10th percentile is roughly $3.3$ while the 90th percentile is roughly $7.2$. Distributional RL aims to learn this entire distribution, not just its mean.
+
+We will use this two-state MDP as our running example throughout the chapter, returning to it in @sec-rl-tabular-qtd where we implement quantile TD learning and watch the algorithm discover the shape of $Z^\pi(A, a)$ from scratch.
+
+Let us now analyze the stochastic version in more detail.
+It is instructive to think about what the return distribution looks like at convergence. Each time the agent visits state $A$, it receives either $+2$ or $0$, each with probability $0.5$. These binary rewards at each visit to $A$ create a cascade of randomness: the return from state $A$ is $R_0 + \gamma^2 R_2 + \gamma^4 R_4 + \cdots$, where each $R_{2k}$ is independently $0$ or $2$ and rewards from state $B$ are always zero. The distribution of this infinite sum is not Gaussian --- it is the distribution of a random geometric series, and its shape depends on $\gamma$. For moderate $\gamma$ (say 0.9), the distribution is unimodal and roughly bell-shaped, but it is bounded below (the return cannot be negative) and has a right tail that is heavier than the left. For small $\gamma$, the distribution concentrates around the single-step reward. For $\gamma$ close to 1, the distribution becomes increasingly spread out as more and more random rewards contribute significantly to the sum. This sensitivity of the return distribution's shape to the discount factor is one reason why distributional RL can capture phenomena that are invisible to the mean. We will see this distribution empirically in @sec-rl-tabular-qtd when we run quantile TD learning on this MDP.
+:::
+
+
+### Why Distributions, Not Just Means? {#sec-rl-why-distributions}
+
+Why bother learning the full distribution of returns when classical RL has been so successful with just the expected value?
+After all, the mean is sufficient for risk-neutral decision-making, and most RL agents are risk-neutral.
+There are three compelling reasons to go beyond the mean, each of which connects to a deeper theme in this book.
+
+The first reason is *risk-sensitive decision-making*. In many safety-critical applications, the mean reward is a dangerously inadequate summary. Consider an autonomous vehicle approaching an intersection. Suppose action $a_1$ (proceeding cautiously) yields returns centered at $+5$ with low variance, while action $a_2$ (accelerating through) has the same mean of $+5$ but a bimodal distribution: a 90\% chance of $+6$ and a 10\% chance of $-4$. A risk-neutral agent that maximizes expected return is indifferent between these two actions. But no sane engineer would deploy a self-driving car that is indifferent between a safe maneuver and one that causes a collision 10\% of the time. The full return distribution allows us to distinguish these situations and choose actions that are not merely good on average but also safe in the tails. We formalize this idea with Conditional Value-at-Risk in @sec-rl-cvar.
+
+The second reason is *richer learned representations*. Even when the ultimate goal is risk-neutral control --- when we only care about the expected return --- predicting the full distribution produces better internal features than predicting just the mean. This is an empirical finding reported by @bellemare2017distributional and studied in depth in @bellemare2023distributional [Chapter 10]. The intuition is that predicting a distribution is a harder auxiliary task than predicting a scalar, and this harder task forces the network to learn more informative representations of the state. Consider a standard DQN agent: it must learn features of the state $x$ that are informative about the scalar $Q(x, a)$. A distributional agent, by contrast, must learn features that are informative about the *entire distribution* of returns --- its mean, variance, skewness, tail behavior, and modality. This is a much more demanding requirement, and the features that satisfy it are necessarily richer and more nuanced. The gradient signal from matching 51 probability masses (in C51) or from satisfying the pinball loss at many quantile levels (in QR-DQN and IQN) is far richer than the single scalar TD error in standard Q-learning. The result is that distributional agents achieve higher scores on the Atari benchmark suite even when actions are selected using only the mean of the predicted distribution, with no risk sensitivity at all. This "auxiliary task" interpretation is one of the most surprising and practically important findings in modern RL, and it has a direct analog in GBC: the features learned by an IQN trained with the pinball loss at many quantile levels are richer than those learned by a standard neural network trained with the squared error loss at the conditional mean.
+
+The third reason, and the one that matters most for this book, is *structural analogy with GBC*. The distributional Bellman operator $\mathcal{T}^\pi$ transforms a distribution of future returns into a distribution of current returns via the affine map $z \mapsto r + \gamma z$. This is a *push-forward* operation: we push the distribution of $Z^\pi(X', A')$ through the function $z \mapsto R + \gamma z$ to obtain the distribution of $Z^\pi(X, A)$. In GBC, the noise outsourcing theorem (@sec-noise-outsourcing) tells us that any conditional distribution $Y \mid X$ can be generated by pushing a uniform random variable $U$ through the conditional quantile function $G^*(\tau, x) = F_{Y|X=x}^{-1}(\tau)$. Both frameworks learn conditional distributions by transporting a base distribution through a learned function. This parallel is not a coincidence --- it is the structural foundation on which the GBC framework is built.
+We make it precise in @sec-rl-bridge.
+
+
+## Wasserstein Contraction {#sec-rl-wasserstein}
+
+We have now stated the distributional Bellman equation and motivated the distributional approach.
+A natural next question is: does iterating the distributional Bellman operator converge?
+For the scalar Bellman equation, the answer is classical --- the operator $\mathcal{T}^\pi$ is a $\gamma$-contraction in the sup-norm, so Banach's fixed-point theorem guarantees convergence.
+The distributional case requires more care.
+We are now working in a space of probability distributions, not a space of real numbers, and we need a metric on this space that is compatible with the structure of the Bellman operator.
+Not any metric will do --- the choice of metric determines whether the contraction property holds.
+
+The right metric turns out to be the *Wasserstein distance*, also known as the earth mover's distance. The "earth mover" name comes from a vivid physical analogy that is worth dwelling on. Imagine you have two piles of dirt on the real line --- one shaped like distribution $F$, the other shaped like distribution $G$. You want to reshape pile $F$ into pile $G$ by moving dirt along the real line. The Wasserstein distance measures the minimum total work (mass times distance) required to accomplish this reshaping. If the two piles are identical, no dirt needs to move and the distance is zero. If one pile is shifted to the right of the other, you must transport all the dirt by that shift amount. The Wasserstein distance captures not just *whether* two distributions differ but *how far apart* their mass needs to travel to make them agree.
+Think of it as the cost of a transportation plan: how much work (in ton-kilometers, if you like) does it take to move the dirt from configuration $F$ to configuration $G$? This geometric character makes it particularly well-suited for measuring the distance between return distributions, which are transformed by affine operations (scaling by $\gamma$ and shifting by $R$) at each step of the Bellman recursion. Other popular distances between distributions, such as the KL divergence, lack this geometric property: moving a distribution by a small amount in the support can cause an arbitrarily large change in KL divergence if the densities have thin tails or atoms. The Wasserstein distance, by contrast, is always bounded by the support diameter and responds continuously to shifts in the distribution --- moving a distribution to the right by $\epsilon$ increases the Wasserstein distance by at most $\epsilon$.
+
+Why the Wasserstein distance rather than, say, the KL divergence or total variation distance? The answer lies in the interaction with affine transformations. The Bellman operator applies $z \mapsto r + \gamma z$, which is affine. The KL divergence does not have a clean scaling property under affine maps, and total variation is too coarse --- it does not account for *how far apart* the mass is, only *how much* mass is misplaced. The Wasserstein distance, by contrast, scales perfectly with affine transformations: $W_p(aF + b, aG + b) = |a| \, W_p(F, G)$. This is exactly the property needed to prove the contraction.
+
+::: {.callout-tip appearance="simple" title="Definition 6.2: p-Wasserstein Distance"}
+For two probability distributions $F$ and $G$ on $\mathbb{R}$ with finite $p$th moments, the *$p$-Wasserstein distance* is
+$$
+W_p(F, G) = \left(\int_0^1 \bigl|F^{-1}(\tau) - G^{-1}(\tau)\bigr|^p \, d\tau\right)^{1/p},
+$$ {#eq-wasserstein}
+where $F^{-1}$ and $G^{-1}$ are the quantile functions.
+:::
+
+This definition reveals a beautiful connection: the Wasserstein distance is the $L^p$ distance between quantile functions. When $p = 1$, it is the area between the two CDFs (equivalently, the area between the two quantile functions). When $p = 2$, it is the $L^2$ distance in quantile space, which has a natural least-squares interpretation. For example, $W_2^2$ between $N(\mu_1, \sigma_1^2)$ and $N(\mu_2, \sigma_2^2)$ equals $(\mu_1 - \mu_2)^2 + (\sigma_1 - \sigma_2)^2$, a clean decomposition into a location term and a scale term. The quantile function representation in @eq-wasserstein is specific to one-dimensional distributions --- in higher dimensions, the Wasserstein distance requires solving an optimal transport problem, which is computationally more involved. But for the return distributions in RL, which are real-valued, the one-dimensional formula is all we need, and it connects the Wasserstein distance directly to the quantile regression framework that underlies IQN.
+
+With the Wasserstein distance in hand, we can now state the central convergence result for distributional RL.
+The following theorem tells us that the distributional Bellman operator brings any two return-distribution functions closer together, at a geometric rate controlled by the discount factor $\gamma$. Intuitively, this means that no matter how we initialize the return distributions, repeated application of the Bellman operator will drive them toward the same unique fixed point --- the true return-distribution function.
+
+::: {.callout-tip appearance="simple" title="Theorem 6.1: Distributional Contraction"}
+The distributional Bellman operator $\mathcal{T}^\pi$ is a $\gamma$-contraction in the $p$-Wasserstein metric: for any two return-distribution functions $\eta_1, \eta_2$,
+$$
+\sup_{(x,a)} W_p\bigl((\mathcal{T}^\pi \eta_1)(x,a), \; (\mathcal{T}^\pi \eta_2)(x,a)\bigr) \leq \gamma \cdot \sup_{(x,a)} W_p\bigl(\eta_1(x,a), \; \eta_2(x,a)\bigr).
+$$ {#eq-wasserstein-contraction}
+:::
+
+*Proof sketch.* The key observation is that the distributional Bellman operator applies the affine transformation $z \mapsto r + \gamma z$ to the future return. In quantile space, if $F_Z^{-1}(\tau)$ is the quantile function of $Z$, then $R + \gamma Z$ has quantile function $r + \gamma F_Z^{-1}(\tau)$ (since the reward $r$ is a constant shift and $\gamma$ is a constant scaling). (For random rewards, this identity holds conditionally on a realized $r$; the full proof integrates over the reward distribution separately.) For the Wasserstein metric, affine transformations therefore satisfy $W_p(R + \gamma F, R + \gamma G) = \gamma \cdot W_p(F, G)$: the shift $R$ cancels in the difference $|F^{-1}(\tau) - G^{-1}(\tau)|$, and the scaling $\gamma$ factors out. Since $\gamma \in [0,1)$, the operator contracts distances by a factor of $\gamma$. When there are multiple states and stochastic transitions, the full proof handles the expectation over transitions and rewards using Jensen's inequality; see @bellemare2023distributional [Chapter 4] for details. $\square$
+
+The practical consequences of this theorem are profound. By the Banach fixed-point theorem, the operator $\mathcal{T}^\pi$ has a unique fixed point --- the true return-distribution function --- and repeated application from any initialization converges to it. The convergence rate is geometric: after $k$ iterations, the Wasserstein distance to the fixed point is at most $\gamma^k$ times the initial distance. For a typical discount factor of $\gamma = 0.99$, this means that after 100 iterations the error is reduced by a factor of about $e^{-1} \approx 0.37$, and after 1000 iterations by a factor of about $e^{-10} \approx 4.5 \times 10^{-5}$. This geometric convergence guarantee, inherited directly from the contraction property, is what makes distributional RL theoretically sound.
+
+It is worth comparing this to the scalar case. The scalar Bellman operator $(\mathcal{T}^\pi Q)(x,a) = \mathbb{E}[R + \gamma Q(X', A')]$ is a $\gamma$-contraction in the $\ell_\infty$ norm, and this is the classical result that underpins all of Q-learning. The distributional result is a strict generalization: it says the same contraction holds not just for the mean but for the entire distribution, when measured in the Wasserstein metric. This generalization is non-trivial because the Wasserstein distance is a much richer quantity than the $\ell_\infty$ distance between scalar functions. It captures differences in shape, spread, and tail behavior, not just differences in location. The fact that the contraction holds in this richer metric is what allows distributional RL to learn the full distribution with the same convergence guarantees that classical RL enjoys for the mean.
+
+An important caveat is that the contraction does *not* hold for all probability metrics. The Cramér distance, the KL divergence, and the total variation distance do not in general yield contractive distributional Bellman operators. This is not merely a theoretical curiosity --- it has practical consequences. The C51 algorithm uses a cross-entropy loss related to KL divergence, and the fact that KL does not contract under the distributional Bellman operator means that C51's theoretical convergence guarantees are weaker than those of QR-DQN and IQN. The Wasserstein distance is special in this regard, and its connection to quantile functions via @eq-wasserstein is what makes quantile-based algorithms the theoretically preferred approach to distributional RL. See @bellemare2023distributional [Chapters 4--5] for a detailed discussion.
+
+The Wasserstein contraction also provides the theoretical justification for learning return distributions via quantile regression. The argument goes as follows. Since $W_p$ is the $L^p$ distance between quantile functions (@eq-wasserstein), minimizing a quantile-based loss is directly minimizing an approximation to the Wasserstein distance between the predicted and true return distributions. Let us spell out this connection more carefully, because it is one of the deepest results in distributional RL and it underpins the entire GBC framework.
+
+Consider a target distribution $\nu$ with quantile function $F_\nu^{-1}$, and suppose we want to approximate it with a discrete distribution $\hat{\nu} = \frac{1}{m}\sum_{i=1}^m \delta_{\theta_i}$ supported on $m$ equally-weighted atoms. What values of $\theta_1, \ldots, \theta_m$ minimize the 1-Wasserstein distance $W_1(\nu, \hat{\nu})$? Using the quantile representation, the quantile function of $\hat{\nu}$ is the step function $F_{\hat{\nu}}^{-1}(\tau) = \theta_i$ for $\tau \in [(\tau_{i-1}+\tau_i)/2, (\tau_i + \tau_{i+1})/2)$, where $\tau_i = (2i-1)/(2m)$ are the midpoints of $m$ equal intervals. The Wasserstein distance becomes $W_1(\nu, \hat{\nu}) = \int_0^1 |F_\nu^{-1}(\tau) - F_{\hat{\nu}}^{-1}(\tau)| \, d\tau$, and minimizing over the $\theta_i$ decouples into $m$ independent problems. For each interval, the optimal $\theta_i$ is the *median* of $F_\nu^{-1}(\tau)$ over that interval, which is precisely $F_\nu^{-1}(\tau_i)$ --- the $\tau_i$th quantile of $\nu$. This is the *quantile projection*: it maps $\nu$ to the $m$-quantile distribution that is closest in $W_1$. And the pinball loss $\rho_{\tau_i}(y - \theta_i)$, minimized over $\theta_i$, recovers the $\tau_i$th quantile from samples of $\nu$. The chain of reasoning is therefore: Bellman operator contracts in Wasserstein $\to$ quantile projection is Wasserstein-optimal $\to$ pinball loss estimates the quantile projection from samples $\to$ therefore quantile TD learning converges to the correct fixed point. This elegant chain of reasoning --- from contraction to projection to loss function --- is the theoretical backbone of QR-DQN and IQN. It also explains why the pinball loss is the right loss function for GBC: it is not an arbitrary choice but the loss that is *optimal* in the Wasserstein sense for learning quantile functions.
+
+```{python}
+#| eval: true
+#| code-fold: true
+#| fig-cap: "Wasserstein distance as the L1 distance between quantile functions. The shaded area between F^{-1} and G^{-1} equals W_1(F, G)."
+#| label: fig-wasserstein
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.stats import norm
+
+tau = np.linspace(0.01, 0.99, 500)
+F_inv = norm.ppf(tau, loc=0, scale=1)     # N(0, 1)
+G_inv = norm.ppf(tau, loc=1.5, scale=0.7) # N(1.5, 0.7)
+
+fig, ax = plt.subplots(1, 1, figsize=(6, 3.5))
+ax.plot(tau, F_inv, label=r'$F^{-1}(\tau)$: N(0, 1)', color='steelblue', lw=2)
+ax.plot(tau, G_inv, label=r'$G^{-1}(\tau)$: N(1.5, 0.7)', color='coral', lw=2)
+ax.fill_between(tau, F_inv, G_inv, alpha=0.2, color='gray',
+                label=r'$W_1(F, G) = \int |F^{-1} - G^{-1}| d\tau$')
+ax.set_xlabel(r'$\tau$')
+ax.set_ylabel(r'Quantile value')
+ax.set_title('Wasserstein distance as area between quantile functions')
+ax.legend(fontsize=8)
+plt.tight_layout()
+plt.show()
+
+# Compute W1 numerically
+W1 = np.trapezoid(np.abs(F_inv - G_inv), tau)
+```
+
+
+## From C51 to QR-DQN to IQN {#sec-rl-qrdqn-iqn}
+
+The distributional Bellman equation tells us *what* to learn; the question is *how*. The evolution of distributional RL algorithms is a progression from coarser to finer representations of the return distribution. Each step in this evolution removes a limitation of the previous approach, and the final step --- IQN --- produces the architecture that GBC inherits. We now describe each algorithm in detail, but first, the following diagram illustrates the overall progression and the key insight at each transition:
+
+```{mermaid}
+%%| fig-cap: "Evolution of distributional RL representations: from fixed atoms to implicit quantile functions."
+%%| label: fig-dist-rl-evolution
+%%| fig-width: 7
+graph LR
+    C51("C51 (2017)<br/>Fixed atoms<br/>Learn probabilities") -->|"Eliminate<br/>projection"| QR("QR-DQN (2018)<br/>Fixed quantile levels<br/>Learn locations")
+    QR -->|"Continuous<br/>τ input"| IQN("IQN (2018)<br/>Implicit quantiles<br/>Learn full Q(τ)")
+    IQN -->|"Remove Bellman<br/>recursion"| GBC("GBC<br/>Supervised quantile<br/>regression")
+```
+
+**C51: Categorical Representation.**
+The first practical distributional RL algorithm was *C51* [@bellemare2017distributional], which represents the return distribution as a categorical distribution over a fixed grid of $N$ atoms $z_1 < z_2 < \cdots < z_N$:
+$$
+\eta(x, a) = \sum_{i=1}^{N} p_i(x, a) \, \delta_{z_i},
+$$
+where $p_i(x, a)$ are learned probabilities. C51 uses $N = 51$ atoms (hence the name) spanning a pre-specified range $[V_{\min}, V_{\max}]$.
+
+C51 achieved a breakthrough result on the Atari benchmark, demonstrating for the first time that learning the full return distribution leads to dramatically better game-playing performance than learning only the mean. On a suite of 57 Atari games, C51 outperformed DQN (the previous state of the art) on 45 games, often by substantial margins. The name "C51" comes from the 51 atoms in the categorical distribution, chosen as a good balance between resolution and computational cost. But C51 has a fundamental limitation rooted in its fixed support. The network architecture underlying C51 is a natural extension of DQN.
+DQN's network takes a state $x$ as input and outputs one scalar $Q(x, a)$ per action.
+C51's network takes the same input but produces $N \times |\mathcal{A}|$ outputs instead of $|\mathcal{A}|$ outputs: for each action, it predicts a softmax distribution over the $N$ atoms. Training follows the distributional Bellman equation, but a subtlety arises during the backup step. When the distributional Bellman operator is applied to the current estimate --- computing $r + \gamma z_i$ for each atom --- the resulting values generally do not land on the original grid $\{z_1, \ldots, z_N\}$. The targets are shifted and scaled, and they must be *projected* back onto the fixed grid. This categorical projection distributes the probability mass of each shifted atom to its two nearest grid neighbors, in proportion to the distance. While mathematically clean, the projection introduces *diffusion error*: probability mass that should be concentrated at a point gets smeared across two atoms, and this smearing compounds over many iterations of the Bellman operator. Furthermore, the designer must choose the range $[V_{\min}, V_{\max}]$ in advance, and if the true return distribution extends beyond this range, the approximation suffers.
+
+**QR-DQN: Fixed Quantile Representation.**
+The key idea behind *Quantile Regression DQN* (QR-DQN) [@dabney2017distributional] is disarmingly simple: instead of fixing the *locations* (atoms) and learning the *probabilities*, fix the *probabilities* and learn the *locations*.
+This is a conceptual inversion that has profound consequences.
+Think of it this way: C51 asks "how much probability mass should I assign to each of these pre-specified values?" while QR-DQN asks "at each of these pre-specified probability levels, what value should I report?"
+The latter is precisely the definition of a quantile function. It represents the return distribution using a fixed set of $m$ quantile levels $\tau_1, \ldots, \tau_m$, where $\tau_i = (2i - 1) / (2m)$:
+$$
+\eta_w(x, a) = \frac{1}{m} \sum_{i=1}^{m} \delta_{\theta_i(x, a; w)},
+$$
+where $\theta_i(x, a; w)$ is the learned $\tau_i$th quantile of the return distribution. Unlike C51, the locations $\theta_i$ are learned while the probabilities are fixed at $1/m$.
+
+The key insight of QR-DQN is that the *quantile projection* --- mapping a distribution to its quantile approximation --- minimizes the 1-Wasserstein distance. This eliminates the need for the categorical projection entirely. When the Bellman target $r + \gamma \theta_j(x', a^*; \tilde{w})$ does not align with any preordained grid, there is no problem: the network simply adjusts its quantile estimates to match the target distribution. The pinball loss provides the mechanism. Given a sample transition $(x, a, r, x')$, the loss is
+$$
+\mathcal{L}(w) = \frac{1}{m} \sum_{i=1}^{m} \sum_{j=1}^{m} \rho_{\tau_i}^H\bigl(r + \gamma \, \theta_j(x', a^*; \tilde{w}) - \theta_i(x, a; w)\bigr),
+$$ {#eq-qrdqn-loss}
+where $\rho_\tau^H$ is the Huber quantile loss (a smoothed version of the pinball loss) and $\tilde{w}$ denotes a target network. This connects distributional RL directly to quantile regression theory (@sec-quantiles). The transition from C51 to QR-DQN is thus the transition from a *density-based* representation (probabilities on a fixed grid) to a *quantile-based* representation (quantile values at fixed levels), and this shift eliminates the projection step that was the main source of approximation error in C51. It is worth noting that QR-DQN also eliminates the need to specify the range $[V_{\min}, V_{\max}]$ in advance. Since the quantile locations are learned rather than fixed, the representation automatically adapts to the scale of the returns. If the returns range from $-100$ to $+1000$, the network will learn quantile values in that range; if they range from $0$ to $1$, it will learn values in that range. This adaptivity is important in practice because the range of returns can vary dramatically across different tasks, and choosing a poor range for C51 can severely degrade performance.
+
+**IQN: Implicit Quantile Representation.**
+**Implicit Quantile Networks** (IQN) [@dabney2018implicit] take the final and most important step: instead of fixing $m$ quantile levels, they treat $\tau$ as a continuous input to the neural network. The network maps $(x, a, \tau)$ to the $\tau$th quantile of the return:
+$$
+\theta_w(x, a, \tau) \approx F_{\eta(x,a)}^{-1}(\tau).
+$$ {#eq-iqn-rl}
+
+The word "implicit" in the name refers to the fact that the distribution is represented *implicitly* through the quantile function, rather than explicitly through a finite set of parameters (probabilities or locations).
+This terminology is borrowed from computer graphics, where an *implicit surface* is defined as the level set of a function rather than as an explicit mesh of triangles. The quantile function is never stored as a table; instead, it is *computed on the fly* by querying the network at the desired $\tau$ value. This is similar to how a neural radiance field (NeRF) represents a 3D scene implicitly as a function of position and viewing angle, rather than explicitly as a voxel grid.
+
+Why is this a meaningful advance over QR-DQN? With fixed quantile levels, the network can only represent the distribution at $m$ discrete points. If we want to compute, say, $\text{CVaR}_{0.03}$ but none of our quantile levels fall below $\tau = 0.05$, we have no information about the extreme left tail and cannot estimate this risk measure. IQN solves this by making $\tau$ a continuous input: we can query the quantile function at *any* level, including levels we never trained on, because the network has learned a smooth function of $\tau$. This gives us access to the entire distribution, not just a finite sample of it.
+
+The $\tau$ input is encoded using the cosine embedding from @sec-iqn-cosine:
+$$
+\varphi(\tau) = \bigl(\cos(\pi \tau \cdot 0), \cos(\pi \tau \cdot 1), \ldots, \cos(\pi \tau \cdot (M-1))\bigr),
+$$
+and multiplicatively combined with the state representation, exactly as in the GBC architecture (@eq-iqn-architecture). The cosine embedding is not arbitrary --- it provides a smooth, high-dimensional representation of the scalar $\tau \in (0,1)$ that allows the network to represent complex, non-linear dependence of the quantile function on $\tau$. The intuition is similar to positional encodings in the Transformer architecture: by mapping a scalar to a high-dimensional vector of sines and cosines at different frequencies, we enable the network to learn functions that vary at multiple scales. Low-frequency components of $\varphi(\tau)$ capture the overall shape of the quantile function (e.g., whether it is increasing or decreasing), while high-frequency components capture fine-grained details such as sharp changes in the tails or multimodal structure. The embedding dimension $M$ controls the expressiveness: larger $M$ allows the network to represent more complex quantile functions, at the cost of more parameters. In practice, $M = 64$ is a common default.
+
+The induced state-action value function is estimated by Monte Carlo:
+$$
+Q_w(x, a) \approx \frac{1}{m} \sum_{i=1}^{m} \theta_w(x, a, \tau_i), \quad \tau_i \sim \text{Uniform}(0,1).
+$$ {#eq-iqn-value}
+
+For learning, IQN samples pairs of levels $\tau, \tau'$ and minimizes the Huber quantile loss:
+$$
+\mathcal{L}_{\tau, \tau'}(w) = \rho_\tau^H\bigl(r + \gamma \, \theta_{\tilde{w}}(x', a^*, \tau') - \theta_w(x, a, \tau)\bigr).
+$$ {#eq-iqn-loss-rl}
+
+The full IQN loss aggregates over $N$ samples of $\tau$ and $N'$ samples of $\tau'$:
+$$
+\mathcal{L}(w) = \frac{1}{N'}\sum_{i=1}^{N} \sum_{j=1}^{N'} \rho^H_{\tau_i}(\delta_{ij}),
+$$ {#eq-iqn-loss-full}
+where $\delta_{ij} = r + \gamma\,\theta_{\tilde{w}}(x', a^*, \tau'_j) - \theta_w(x, a, \tau_i)$, with $\tau_i \sim \mathrm{Uniform}(0,1)$ independently sampled for the online network and $\tau'_j \sim \mathrm{Uniform}(0,1)$ for the target network. In practice, $N = N' = 64$ is a common choice.
+
+The table below summarizes the evolution.
+
+| Algorithm | Distribution Repr. | Free Parameters | Projection |
+|-----------|-------------------|-----------------|------------|
+| C51       | Categorical (fixed atoms) | Probabilities $p_i$ | Categorical |
+| QR-DQN    | Quantile (fixed levels) | Locations $\theta_i$ | Quantile (Wasserstein-optimal) |
+| IQN       | Quantile (implicit) | Continuous function $\theta(\cdot)$ | None (sample $\tau$) |
+
+: Evolution of distributional RL representations. {#tbl-dist-rl-evolution}
+
+The progression from C51 to IQN mirrors a fundamental principle: as the representation becomes more flexible, the need for explicit projection operators disappears. IQN directly parameterizes the quantile function and uses stochastic sampling of $\tau$ to cover the entire distribution. Each step in the C51 $\to$ QR-DQN $\to$ IQN trajectory solves a specific problem: C51 introduces distributional learning but requires a fixed support and a lossy projection; QR-DQN eliminates the projection by moving to quantile space but fixes the quantile levels; IQN frees the quantile levels by making $\tau$ an input. The result is a network architecture that can represent arbitrary return distributions, and this is the architecture that GBC adopts wholesale for statistical inference.
+
+On the Atari benchmark, this progression also yielded steadily improving performance. @bellemare2023distributional [Chapter 10] report that DQN achieves a human-normalized interquartile mean (HNIQM) score of about 0.4, C51 raises this to roughly 0.8, QR-DQN to about 1.0, and IQN to approximately 1.1. These numbers mean that IQN plays at or above human level on the majority of the 57 Atari games. The performance gains are not solely due to the richer distributional representation --- they also reflect the improved gradient signal and state representations that come with predicting a full distribution rather than a single scalar.
+
+It is worth reflecting on the timeline. C51 was published in 2017, QR-DQN in early 2018, and IQN in mid-2018. In the span of roughly 18 months, the distributional RL community moved from a fixed categorical grid to a fully implicit quantile representation. This rapid evolution was driven by a clear theoretical understanding of the limitations at each step: the Wasserstein contraction theorem pointed to quantile representations as theoretically optimal, and the practical limitations of fixed discretizations (projection error in C51, fixed resolution in QR-DQN) motivated the move to increasingly flexible parameterizations. The resulting IQN architecture has proven to be remarkably durable --- it remains a strong baseline in distributional RL and, as we argue in this book, has found a second life as the core computational engine of GBC. Subsequent work has proposed extensions such as Fully Parameterized Quantile Functions (FQF) by Yang et al. (2019), which adaptively learns the quantile levels themselves, and Moment-Matching DQN (MM-DQN) by Nguyen et al. (2021), which uses moment-based losses. But IQN's combination of simplicity, flexibility, and theoretical grounding makes it the natural choice for GBC, where the supervised learning setting is simpler than the RL setting and the benefits of more complex architectures are marginal.
+
+
+## Tabular Quantile TD Learning {#sec-rl-tabular-qtd}
+
+Before we move on to risk-sensitive control, let us see distributional RL in action on the two-state MDP from @exm-two-state. We implement *quantile temporal-difference learning*, the tabular precursor to QR-DQN, and watch the quantile function converge. The algorithm maintains a table of $m$ quantile estimates $\theta_1(x), \ldots, \theta_m(x)$ for each state $x$ and updates them using the pinball loss with TD targets. In the tabular setting, we use the plain pinball loss $\rho_\tau$. Deep RL implementations (QR-DQN, IQN) use the Huber quantile loss $\rho^H_\tau$ for smoother gradients near zero; the difference is only in the transition region around $\delta = 0$ and does not affect the fixed point.
+
+The update rule is simple and mirrors the scalar TD update, but with the pinball loss replacing the squared error. At each step, the agent observes a transition $(x, r, x')$, computes a target $y = r + \gamma \theta_j(x')$ for a randomly chosen target quantile $j$, and updates each quantile estimate $\theta_i(x)$ in the direction that reduces $\rho_{\tau_i}(y - \theta_i(x))$. The gradient of the pinball loss is $\tau_i$ if $y > \theta_i(x)$ (the target is above the estimate, so push up) and $\tau_i - 1$ if $y < \theta_i(x)$ (the target is below the estimate, so push down). For $\tau_i = 0.5$ (the median), this is symmetric: push up and push down with equal force. For $\tau_i = 0.9$, the push-up force is $0.9$ and the push-down force is only $-0.1$, so the estimate gravitates toward a high quantile. This asymmetric gradient is the entire mechanism by which different quantile levels learn to represent different parts of the distribution. The pinball loss was introduced in @sec-quantiles, and we saw there that minimizing $\mathbb{E}[\rho_\tau(Y - q)]$ over $q$ yields the $\tau$th quantile of $Y$. Here, the same loss is applied in a temporal-difference context: the "observed" value is not a direct sample from the target distribution but rather a one-step bootstrap estimate $r + \gamma \theta_j(x')$. The remarkable fact is that the algorithm converges despite this bootstrapping --- a consequence of the Wasserstein contraction proved in @sec-rl-wasserstein.
+
+```{python}
+#| eval: false
+#| code-fold: true
+import numpy as np
+import matplotlib.pyplot as plt
+
+np.random.seed(42)
+
+# Two-state MDP parameters
+gamma = 0.9
+n_quantiles = 21
+taus = np.linspace(0.5 / n_quantiles, 1 - 0.5 / n_quantiles, n_quantiles)
+n_episodes = 10000
+episode_length = 200
+lr = 0.05
+
+# Initialize quantile estimates for states A (0) and B (1)
+theta = np.zeros((2, n_quantiles))
+
+# Track history of selected quantiles
+history_steps = []
+history_q10 = []
+history_q50 = []
+history_q90 = []
+
+for ep in range(n_episodes):
+    state = 0  # start in state A
+    for t in range(episode_length):
+        # Stochastic reward: state A gives 0 or 2 with equal prob
+        if state == 0:
+            reward = 2.0 if np.random.rand() < 0.5 else 0.0
+        else:
+            reward = 0.0
+        next_state = 1 - state  # deterministic alternation
+
+        # Quantile TD update
+        for i in range(n_quantiles):
+            # Sample a target quantile index
+            j = np.random.randint(n_quantiles)
+            target = reward + gamma * theta[next_state, j]
+            delta = target - theta[state, i]
+            # Pinball gradient
+            if delta >= 0:
+                grad = taus[i]
+            else:
+                grad = taus[i] - 1.0
+            theta[state, i] += lr * grad
+
+        state = next_state
+
+    # Record convergence
+    if ep % 50 == 0:
+        history_steps.append(ep)
+        # Quantile indices: ~10%, ~50%, ~90%
+        history_q10.append(theta[0, 2])
+        history_q50.append(theta[0, n_quantiles // 2])
+        history_q90.append(theta[0, -3])
+
+# Monte Carlo ground truth: simulate many returns from state A
+n_mc = 50000
+mc_returns = np.zeros(n_mc)
+for i in range(n_mc):
+    ret = 0.0
+    disc = 1.0
+    state = 0
+    for t in range(episode_length):
+        if state == 0:
+            r = 2.0 if np.random.rand() < 0.5 else 0.0
+        else:
+            r = 0.0
+        ret += disc * r
+        disc *= gamma
+        state = 1 - state
+    mc_returns[i] = ret
+
+mc_returns.sort()
+mc_quantiles = np.array([mc_returns[int(t * n_mc)] for t in taus])
+
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+# Left: learned vs true quantile function
+axes[0].plot(taus, theta[0], 'o-', color='steelblue', markersize=4,
+             label='Quantile TD (learned)')
+axes[0].plot(taus, mc_quantiles, 's--', color='coral', markersize=4,
+             label='Monte Carlo (ground truth)')
+axes[0].set_xlabel(r'$\tau$')
+axes[0].set_ylabel(r'$F_{Z(A)}^{-1}(\tau)$')
+axes[0].set_title('Learned quantile function (state A)')
+axes[0].legend(fontsize=8)
+
+# Right: convergence traces
+axes[1].plot(history_steps, history_q10, label=r'$\tau \approx 0.10$',
+             color='#d62728')
+axes[1].plot(history_steps, history_q50, label=r'$\tau \approx 0.50$',
+             color='#2ca02c')
+axes[1].plot(history_steps, history_q90, label=r'$\tau \approx 0.90$',
+             color='#1f77b4')
+axes[1].set_xlabel('Episode')
+axes[1].set_ylabel('Quantile estimate')
+axes[1].set_title('Convergence of quantile estimates (state A)')
+axes[1].legend(fontsize=8)
+
+plt.tight_layout()
+plt.show()
+
+print(f"Learned mean return (state A): {theta[0].mean():.3f}")
+print(f"MC mean return (state A): {mc_returns.mean():.3f}")
+print(f"Learned std (state A): {np.std(np.diff(theta[0])):.4f}")
+```
+
+```{python}
+#| eval: true
+#| echo: false
+#| label: fig-qtd-twostate
+#| fig-cap: "Quantile TD learning on the two-state MDP with stochastic rewards. Left: the learned quantile function after 10,000 episodes compared to a Monte Carlo ground truth. Right: convergence of three quantile estimates over training."
+from IPython.display import Image
+display(Image("cache/fig-qtd-twostate.png"))
+```
+
+The left panel of @fig-qtd-twostate shows the learned quantile function for state $A$ after 10,000 episodes, alongside the Monte Carlo ground truth computed from 50,000 simulated trajectories. The agreement is excellent: quantile TD learning correctly captures the shape of the return distribution, including its asymmetry (the right tail is heavier than the left tail because large rewards compound multiplicatively across time steps). The right panel shows how three representative quantile estimates --- at roughly the 10th, 50th, and 90th percentiles --- evolve during training. All three converge smoothly within a few thousand episodes, illustrating the geometric convergence guaranteed by the Wasserstein contraction theorem (@eq-wasserstein-contraction). This simple example demonstrates the core mechanism: the pinball loss drives each quantile estimate toward the corresponding quantile of the true return distribution, with no projection step, no density estimation, and no parametric assumptions about the distribution's shape.
+
+Several observations are worth highlighting as we examine this example, because they preview the properties that make the IQN architecture so powerful in the GBC context.
+
+First, the quantile TD algorithm needs no knowledge of the reward distribution --- it learns from sample transitions alone. Whether the rewards are Bernoulli, Gaussian, heavy-tailed, or multimodal, the same algorithm and the same pinball loss apply. The algorithm is *distribution-free* in its assumptions, even though it learns a *distributional* object. Second, the number of quantiles $m$ controls the resolution-computation tradeoff. With $m = 5$ quantiles, we get a coarse sketch of the distribution; with $m = 100$, we get a high-fidelity approximation. In the deep RL setting, @dabney2017distributional found that $m = 200$ quantiles worked well for Atari games, while in the GBC setting we typically use $m = 32$ or $m = 64$ during training and can query the implicit network at arbitrary resolution during inference. Note that the IQN architecture (which we introduce next in @sec-rl-qrdqn-iqn) makes this tradeoff moot: since $\tau$ is a continuous input, the network can be queried at any resolution at inference time regardless of how many quantile levels were sampled during training.
+
+
+## Risk-Sensitive Control and CVaR {#sec-rl-cvar}
+
+One of the most compelling reasons to learn the full return distribution is that it enables *risk-sensitive* decision-making. In standard RL, the agent maximizes expected return --- it is risk-neutral. But many real-world applications demand risk aversion: a robot should avoid actions with catastrophic failure modes even if their expected return is high; a financial agent should consider downside risk, not just expected profit.
+
+With the return distribution in hand, we can optimize any *risk measure* applied to $Z^\pi(x, a)$. A risk measure is a functional that maps a random variable (the return) to a single number that summarizes its undesirability from a risk perspective. The simplest risk measure is the expectation $\mathbb{E}[Z]$, which ignores risk entirely. The variance $\text{Var}(Z)$ measures overall uncertainty but treats upside deviations the same as downside deviations, which is usually not what a risk-averse agent wants. The most important risk measure in practice is the *Conditional Value-at-Risk* (CVaR), also known as Expected Shortfall, which focuses exclusively on the left tail of the distribution. Before we define it formally, let us build intuition with a concrete example.
+
+Suppose a trading strategy produces returns that follow a bimodal distribution: with probability 0.7, the return is drawn from $N(3, 1)$ (the "good" regime --- the strategy works as intended), and with probability 0.3, the return is drawn from $N(-2, 0.5)$ (the "bad" regime --- a market dislocation causes losses). The expected return is $0.7 \times 3 + 0.3 \times (-2) = 1.5$, which looks attractive. But the worst 10\% of outcomes are concentrated in the bad regime, with an average around $-2.5$. A risk-neutral agent sees only the $+1.5$ expected return and is happy. A risk-averse agent who examines the left tail of the distribution will think twice.
+
+This scenario is not hypothetical. Many real-world systems exhibit exactly this kind of bimodal behavior: autonomous vehicles encounter normal driving conditions most of the time but face hazardous edge cases occasionally; pharmaceutical treatments work for most patients but cause severe adverse events in a small subpopulation; financial strategies perform well in normal markets but suffer catastrophic losses during crises. In all these cases, the mean is an inadequate summary of the outcome distribution, and what we really need is a measure that focuses on the tail. CVaR formalizes this tail examination.
+
+::: {.callout-tip appearance="simple" title="Definition 6.3: Conditional Value-at-Risk"}
+For a random variable $Z$ with quantile function $F_Z^{-1}$ and a risk level $\alpha \in (0, 1)$, the *Conditional Value-at-Risk* is
+$$
+\text{CVaR}_\alpha(Z) = \frac{1}{\alpha} \int_0^{\alpha} F_Z^{-1}(\tau) \, d\tau.
+$$ {#eq-cvar}
+This is the expected value of $Z$ in its worst $\alpha$-fraction of outcomes.
+:::
+
+The formula in @eq-cvar has an elegant interpretation: CVaR$_\alpha$ is simply the average of the quantile function over the interval $[0, \alpha]$. It answers the question: "If we focus only on the worst $\alpha$ fraction of scenarios, what is the expected outcome?" When $\alpha = 1$, CVaR$_1(Z) = \mathbb{E}[Z]$ because we are averaging over the entire quantile function. As $\alpha$ decreases toward zero, CVaR$_\alpha$ zooms in on increasingly extreme left-tail events. This makes CVaR a natural one-parameter family of risk measures, continuously interpolating between risk-neutral ($\alpha = 1$) and worst-case ($\alpha \to 0$).
+
+The connection between CVaR and quantile functions is not just mathematically elegant --- it is computationally convenient. Given a quantile function (learned by IQN or estimated from data), CVaR requires only an integral over a subinterval of $[0,1]$. No density estimation is needed, no tail fitting, no parametric assumptions. This is in stark contrast to other approaches to tail risk measurement, which typically require estimating the probability density in the tails, where data is scarce and estimates are unreliable. The quantile function approach to CVaR is numerically stable and well-behaved even when the underlying distribution is heavy-tailed, multimodal, or has atoms.
+
+CVaR has a beautiful connection to quantile functions: it is simply the average of the quantile function over $[0, \alpha]$. With IQN, computing CVaR is trivial --- we just change the sampling distribution:
+$$
+\text{CVaR}_\alpha(Z(x,a)) \approx \frac{1}{m} \sum_{i=1}^{m} \theta_w(x, a, \tau_i), \quad \tau_i \sim \text{Uniform}(0, \alpha).
+$$ {#eq-cvar-iqn}
+
+Compare this with the expected value estimate (@eq-iqn-value), which uses $\tau_i \sim \text{Uniform}(0, 1)$.
+The *only* difference is the sampling range of $\tau$.
+This elegant property is unique to the implicit parameterization --- with categorical or fixed-quantile representations, computing CVaR requires additional post-processing.
+
+To see this concretely, let us compute CVaR at several levels for our bimodal trading example. With the quantile function in hand, CVaR$_{0.1}$ is the average of $F_Z^{-1}(\tau)$ for $\tau \in [0, 0.1]$. Since the 10th percentile of the bimodal mixture falls deep in the bad regime (around $-2.8$), CVaR$_{0.1} \approx -3.1$. At CVaR$_{0.3}$, we average over the worst 30\% of outcomes, capturing most of the bad regime, and get approximately $-1.6$. At CVaR$_{1.0}$, we recover the mean of $+1.5$. The progression from $-3.1$ to $+1.5$ tells the full risk story in three numbers --- something that the mean alone could never communicate.
+
+This example illustrates why CVaR is preferred over the more familiar Value-at-Risk (VaR) in financial risk management. VaR$_\alpha$ reports only the $\alpha$-quantile itself ($F_Z^{-1}(\alpha)$), which tells you the threshold below which the worst $\alpha$ fraction of outcomes fall. But VaR says nothing about *how bad* those outcomes are. Two distributions can have the same VaR$_{0.05}$ but very different CVaR$_{0.05}$ if one has a heavier left tail than the other. CVaR captures the severity of tail events, not just their location, and it has the additional technical advantage of being a *coherent* risk measure in the sense of @artzner1999coherent: it is subadditive, meaning that diversification never increases risk as measured by CVaR. This coherence property fails for VaR, which is one reason the Basel III banking regulations moved toward CVaR-based capital requirements. In the RL context, the coherence of CVaR means that if two independent sub-policies are combined, the risk of the combined policy (as measured by CVaR) is at most the sum of the individual risks. This is a natural and desirable property for modular system design, where risk budgets must be allocated across components.
+
+A *risk-averse policy* selects actions by maximizing $\text{CVaR}_\alpha$ rather than the expected value:
+$$
+a^* = \arg\max_{a \in \mathcal{A}} \text{CVaR}_\alpha(Z(x, a)).
+$$
+As $\alpha \to 1$, this recovers the risk-neutral policy; as $\alpha \to 0$, it becomes maximally pessimistic, focusing entirely on the worst-case outcome. The beauty of the IQN formulation is that the same trained network supports all these risk attitudes: we train the network once (with $\tau \sim \text{Uniform}(0,1)$ to learn the full quantile function), and then at decision time we simply change the $\tau$ sampling range to implement any desired risk level. There is no need to retrain or fine-tune the network. This separation of *learning* (which is risk-neutral) from *decision-making* (which can be risk-sensitive) is one of the most elegant features of the distributional approach. We return to risk measures and their role in decision-making in @sec-meu, where we develop the maximum expected utility framework as a GBC application.
+
+```{python}
+#| eval: true
+#| code-fold: true
+#| fig-cap: "CVaR at different risk levels for a bimodal return distribution. CVaR_0.1 focuses on the worst 10% of outcomes (left tail), while CVaR_1.0 is the expected value."
+#| label: fig-cvar
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Simulate a bimodal return distribution
+np.random.seed(42)
+returns = np.concatenate([
+    np.random.normal(-2, 0.5, 3000),  # bad outcomes
+    np.random.normal(3, 1.0, 7000)    # good outcomes
+])
+returns.sort()
+
+fig, axes = plt.subplots(1, 3, figsize=(10, 3))
+
+for ax, alpha, color in zip(axes, [0.1, 0.3, 1.0],
+                             ['#d62728', '#ff7f0e', '#2ca02c']):
+    ax.hist(returns, bins=80, density=True, alpha=0.3, color='gray')
+    cutoff = int(len(returns) * alpha)
+    tail = returns[:cutoff]
+    cvar = tail.mean()
+    ax.axvline(cvar, color=color, lw=2, ls='--')
+    ax.hist(tail, bins=max(20, cutoff//50), density=True, alpha=0.5, color=color)
+    ax.set_title(f'CVaR$_{{ {alpha} }}$ = {cvar:.2f}', fontsize=10)
+    ax.set_xlabel('Return')
+    ax.set_yticks([])
+
+axes[0].set_ylabel('Density')
+plt.suptitle('CVaR at different risk levels', fontsize=11, y=1.02)
+plt.tight_layout()
+plt.show()
+```
+
+This connection between distributional RL and risk measures has deep roots in the economics of decision-making under uncertainty. @yaari1987dual proposed a "dual theory" of choice in which agents distort probabilities rather than outcomes --- they apply a *distortion function* $g : [0,1] \to [0,1]$ to the quantile function:
+$$
+V(Z) = \int_0^1 F_Z^{-1}(\tau) \, dg(\tau).
+$$
+CVaR corresponds to the distortion $g(\tau) = \min(\tau / \alpha, 1)$. The expected value corresponds to the identity distortion $g(\tau) = \tau$, and the worst-case outcome corresponds to the limiting distortion $g(\tau) = \mathbf{1}\{\tau > 0\}$. Different choices of $g$ encode different attitudes toward risk, and all of them are computable from the quantile function alone --- no density is needed. This observation has a direct parallel in distributional RL: with IQN, any distortion risk measure can be computed by sampling $\tau$ from the distribution induced by $g$ rather than from the uniform distribution. We develop this connection more fully in @sec-meu, where the GBC framework meets maximum expected utility theory.
+
+
+## Bridge to GBC {#sec-rl-bridge}
+
+We now make explicit the structural analogy between distributional RL and Generative Bayesian Computation. This is the most important section of the chapter and, in some sense, the conceptual hinge of the entire book. Everything before this section is about distributional RL; everything after is about GBC. The central insight is that the IQN was invented for RL, but it is perfectly suited for statistical inference and surrogate modeling.
+
+The intellectual lineage that connects distributional RL to GBC runs through several decades and several disciplines. The story begins with Emanuel Parzen, who in the 1960s and 1970s championed the quantile function as the primary object of statistical analysis --- not the density, not the CDF, but the *inverse CDF* [@parzen1979nonparametric]. Parzen argued that the quantile function is the most natural way to represent a probability distribution: it maps probability levels to data values, it always exists (even for discrete distributions), it is equivariant to monotone transformations, and it connects directly to order statistics and ranks. His vision was ahead of its time, and for decades the density-based approach dominated computational statistics.
+
+Parzen's quantile-centric viewpoint found a natural home in robust statistics and order-statistic theory but was not widely adopted in mainstream computational statistics, which remained committed to density estimation (kernel density estimators, mixture models, and eventually normalizing flows). The density-based approach has clear advantages when the density is smooth and well-behaved, but it struggles with distributions that have atoms, unbounded support, or heavy tails --- precisely the distributions that arise in distributional RL and in many Bayesian inference problems.
+
+Meanwhile, in Bayesian computation, Donald Rubin developed the idea that Bayesian inference is fundamentally about *simulation* rather than density evaluation. The Bayesian bootstrap [@rubin1981bayesian] and the posterior predictive framework treat the posterior as a *generative model*: given a prior and a likelihood, we simulate parameters and data, and the simulated parameters are posterior draws. This simulation-based viewpoint was enormously influential, but Rubin's original approach still required specifying the likelihood explicitly. MCMC methods --- Metropolis-Hastings, Gibbs sampling, Hamiltonian Monte Carlo --- all require evaluating the likelihood (or at least a function proportional to it) at each proposed parameter value. This requirement is the bottleneck that GBC eliminates: by learning the quantile function directly from simulated $(x, y)$ or $(\theta, y)$ pairs, GBC inherits Rubin's simulation philosophy while bypassing the need for likelihood evaluation.
+
+Distributional RL, independently and in a completely different context, arrived at Parzen's quantile representation through the path described in this chapter. The IQN of @dabney2018implicit learns the conditional quantile function of the return distribution by training a neural network with the pinball loss and cosine-embedded quantile levels. The architecture was designed to play Atari games, not to do Bayesian inference. But @polson2024generative recognized that the same architecture, stripped of the Bellman recursion, is exactly what is needed for simulation-based Bayesian computation. The noise outsourcing theorem (@sec-noise-outsourcing) provides the bridge: it guarantees that $Y = G^*(U, X)$ with $U \sim \text{Uniform}(0,1)$, and the IQN learns $\hat{G}(\tau, x; \theta) \approx G^*(\tau, x)$. The Parzen program (quantile functions as the primary object), the Rubin program (Bayesian inference as simulation), and the distributional RL program (learning return distributions via quantile networks) all converge on the same computational framework: GBC. This convergence is not merely a coincidence of notation. Each program, developed independently over decades, arrived at the same conclusion: the quantile function is the right computational primitive for working with probability distributions. Parzen reached this conclusion from the perspective of nonparametric statistics, Rubin from the perspective of Bayesian computation, and Bellemare, Dabney, and Rowland from the perspective of reinforcement learning. GBC unifies these threads into a single framework, inheriting the theoretical rigor of Parzen's quantile analysis, the simulation-based philosophy of Rubin's Bayesian approach, and the practical neural network architecture of distributional RL. The unification is not just conceptual --- it is algorithmic. The same code that trains an IQN for Atari games can, with minor modifications (removing the experience replay buffer, the target network, and the action selection), train a GBC model for Bayesian inference. We will see this concretely in @sec-bayesian-inference.
+
+In distributional RL, the IQN learns a map
+$$
+(x, a, \tau) \longmapsto F_{Z(x,a)}^{-1}(\tau) = \text{$\tau$th quantile of return given state $x$ and action $a$}.
+$$
+
+In GBC, the IQN learns a map
+$$
+(x, \tau) \longmapsto F_{Y|X=x}^{-1}(\tau) = \text{$\tau$th quantile of $Y$ given covariate $x$}.
+$$
+
+The following table makes the correspondence precise.
+
+| Component | Distributional RL | GBC |
+|-----------|------------------|-----|
+| Input | State $x$, action $a$ | Covariate $x$ |
+| Random variable | Return $Z(x,a)$ | Response $Y \mid X = x$ |
+| Network input | $(x, a, \tau)$ | $(x, \tau)$ |
+| Network output | $F_{Z(x,a)}^{-1}(\tau)$ | $F_{Y|X}^{-1}(\tau)$ |
+| Training target | Bellman target $r + \gamma \hat{Q}(\tau' \mid x', a')$ | Observed response $y$ |
+| Loss function | Huber quantile loss $\rho_\tau^H$ | Pinball loss $\rho_\tau$ |
+| Architecture | Cosine embedding + multiplicative merge | Same |
+| Sampling | $\tau \sim \text{Uniform}(0,1)$ | Same |
+
+: The bridge between distributional RL and GBC. {#tbl-rl-gbc-bridge}
+
+The bridge is now fully visible. Let us examine what changes and what stays the same when we cross it.
+
+*What changes.* Despite the structural similarity, there are two key differences. In RL, the training target is the *bootstrapped* Bellman target $r + \gamma \hat{Q}(\tau' \mid x', a')$, which depends on the network's own predictions and creates a moving target requiring stabilization techniques such as target networks and experience replay. In GBC, the training target is the *observed response* $y$---a fixed, ground-truth value---making training much more stable without any need for target networks or replay buffers. Additionally, GBC has no action space $\mathcal{A}$: the covariate $x$ plays the role of the state, and the network learns the conditional distribution of $Y$ given $X = x$. If a decision variable were present (e.g., in optimal experimental design or portfolio optimization), it would enter as an additional input, recovering the full $(x, a, \tau)$ structure.
+
+*What stays the same.* Everything else transfers directly. The cosine embedding $\varphi(\tau) = (\cos(\pi \tau i))_{i=0}^{M-1}$, the multiplicative merge $h = h_x \odot h_\tau$, the uniform $\tau$ sampling during training, and the ability to compute any risk measure by restricting the $\tau$ sampling range are all identical. The pinball loss $\rho_\tau(y - \hat{Q}(\tau \mid x))$ is the GBC counterpart of the Huber quantile loss in RL, and GBC can use either since the Huber variant provides slightly smoother gradients.
+
+The bridge becomes even more transparent through the noise outsourcing theorem (@sec-noise-outsourcing). The theorem guarantees that any conditional distribution $Y \mid X$ can be written as
+$$
+Y = G^*(U, X), \quad U \sim \text{Uniform}(0,1),
+$$
+where $G^*(\tau, x) = F_{Y|X=x}^{-1}(\tau)$ is the conditional quantile function. The IQN learns an approximation $\hat{G}(\tau, x; \theta) \approx G^*(\tau, x)$.
+
+In distributional RL, the noise outsourcing representation applies to the return:
+$$
+Z(x, a) = G^*(U, x, a), \quad U \sim \text{Uniform}(0,1),
+$$
+where $G^*(\tau, x, a) = F_{Z(x,a)}^{-1}(\tau)$ is the quantile function of the return distribution. The return distributions satisfy $Z^\star(x,a) \overset{d}{=} R + \gamma Z^\star(X', A')$ under the optimal policy. In the quantile representation, this means $G^\star(\tau, x, a)$ is the $\tau$-th quantile of the return distribution, but the quantile fixed-point cannot be written as $G^\star(\tau, x, a) = R + \gamma G^\star(\tau', x', a')$ with independent $\tau, \tau'$, because the distributional equality does not distribute across independent uniform arguments. See @bellemare2023distributional [Prop. 4.14] for the correct formulation. The IQN learns the quantile function of the fixed-point distribution by quantile regression against Bellman targets.
+
+The distributional Bellman equation, viewed through the lens of noise outsourcing, is a fixed-point equation for the quantile function $G^*$. The IQN in the RL setting learns this fixed point by iterating the Bellman operator in quantile space. The GBC framework simply removes the Bellman recursion and learns $G^*$ directly from supervised data:
+$$
+\hat{G}(\tau, x; \theta) = \arg\min_\theta \, \mathbb{E}_{(X,Y), \tau}\bigl[\rho_\tau(Y - G(\tau, X; \theta))\bigr].
+$$ {#eq-gbc-objective}
+
+Let us pause and appreciate what this equation represents. @eq-gbc-objective is the *entire GBC training objective*. It says: find the quantile function $G(\tau, x; \theta)$ that minimizes the expected pinball loss over data $(X, Y)$ and uniformly sampled quantile levels $\tau$. There is no likelihood to evaluate, no posterior density to normalize, no Markov chain to converge, no variational bound to tighten. The network takes a covariate $x$ and a quantile level $\tau$, and it outputs a number. If that number is the true conditional quantile $F_{Y|X=x}^{-1}(\tau)$ for all $\tau$ and all $x$, then we have learned the entire conditional distribution of $Y$ given $X$. And because the pinball loss is proper for quantile estimation (@sec-quantiles), minimizing @eq-gbc-objective is guaranteed to recover the true conditional quantile function as the sample size and network capacity grow. The entire apparatus of distributional RL --- the cosine embedding, the multiplicative merge, the stochastic $\tau$ sampling --- transfers intact, but the complex RL training loop (exploration, exploitation, bootstrapping, target networks, experience replay) is replaced by standard supervised learning on observed $(x, y)$ pairs.
+
+This simplification has profound practical consequences. In distributional RL, training is notoriously unstable: the Bellman target $r + \gamma \theta_{\tilde{w}}(x', a^*, \tau')$ is a moving target that depends on the network's own (past) predictions, leading to oscillations and divergence without careful engineering (target networks updated on a slow timescale, experience replay buffers, gradient clipping, reward clipping). In GBC, the target $y$ is fixed once and for all --- it is the observed response, sampled from the data-generating process and stored in the dataset. This is the key difference. Training is therefore as stable as any supervised learning problem: we shuffle the data, sample minibatches of $(x_i, y_i)$ pairs and random quantile levels $\tau$, compute the pinball loss, and backpropagate. There are no deadly triads, no exploration-exploitation dilemmas, no off-policy corrections. No target networks, no replay buffers, no exploration strategy. The same architecture that required millions of frames of Atari game-play (about 200 million frames, or roughly 925 hours of game time) to converge in the RL setting can be trained to convergence in seconds on a standard regression dataset. This dramatic reduction in training complexity is why GBC is practical for statistical problems that traditional Bayesian computation already handles well, while also scaling to problems (high-dimensional covariates, implicit simulators, expensive computer experiments) where MCMC struggles.
+
+To make this comparison vivid: training an IQN agent on a single Atari game requires roughly 200 million environment interactions, a replay buffer storing millions of transitions, a target network updated every 10,000 steps, and specialized reward clipping --- all to learn the return distribution for one game.
+Training a GBC model on a regression dataset of 10,000 observations requires a few hundred SGD epochs, a standard Adam optimizer, and no special tricks beyond shuffling the data.
+The architecture is the same; the training pipeline is vastly simpler.
+This simplification is not a limitation --- it is the whole point.
+By removing the temporal and sequential structure of RL, GBC inherits the powerful representation (the IQN) while discarding the training complexity that makes RL notoriously difficult in practice.
+
+
+## Looking Back, Looking Forward {#sec-rl-summary}
+
+This chapter traced the intellectual journey from classical reinforcement learning to Generative Bayesian Computation.
+It is worth stepping back to see the full arc of the argument before summarizing the key ideas.
+
+We began with the observation that classical RL learns a scalar value function $Q^\pi(x, a) = \mathbb{E}[Z^\pi(x,a)]$, discarding all distributional information about the random return $Z^\pi$.
+Distributional RL, introduced by @bellemare2017distributional, keeps the full distribution. The distributional Bellman equation (@eq-bellman-distributional) is a fixed-point equation in the space of probability distributions, and the Wasserstein contraction theorem (@eq-wasserstein-contraction) guarantees that iterating this equation converges to the true return-distribution function at a geometric rate determined by the discount factor $\gamma$.
+
+The algorithmic evolution from C51 to QR-DQN to IQN (@fig-dist-rl-evolution) progressively freed the distributional representation.
+C51 fixes the support and learns probabilities.
+QR-DQN fixes the probabilities and learns quantile locations.
+IQN treats the quantile level $\tau$ as a continuous network input and learns the entire quantile function.
+Each step eliminates a source of approximation error and increases representational flexibility.
+The tabular quantile TD example in @sec-rl-tabular-qtd showed this learning process in miniature: the pinball loss, applied at different quantile levels, drives each estimate toward the corresponding quantile of the true return distribution.
+
+The full return distribution enables risk-sensitive control via CVaR and other distortion risk measures (@sec-rl-cvar), computable from the quantile function by simply changing the sampling range of $\tau$.
+This connects distributional RL to the economics of decision-making under uncertainty (Yaari's dual theory) and to the maximum expected utility framework developed in @sec-meu.
+The key insight is that the same trained network supports all risk attitudes: we learn once and decide many times.
+
+Finally, the bridge to GBC (@sec-rl-bridge) reveals that the IQN architecture --- cosine embedding, multiplicative merge, pinball loss --- transfers directly from RL to statistical inference.
+The key simplification is that GBC replaces the bootstrapped Bellman target with the observed response $y$, turning an unstable RL training loop into stable supervised learning.
+The noise outsourcing theorem provides the theoretical justification: any conditional distribution can be represented as a quantile function, and the pinball loss is the proper scoring rule for learning it.
+The intellectual lineage from Parzen to Rubin to distributional RL to GBC makes this connection historically inevitable in hindsight, even though it was not anticipated when IQN was first published.
+
+In the chapters that follow, we deploy this framework for surrogate modeling (@sec-surrogates), Bayesian inference (@sec-bayesian-inference), prediction (@sec-prediction), and causal inference (@sec-causal). The IQN architecture that learned to play Atari games will learn posterior distributions, predictive distributions, and counterfactual distributions --- all with the same loss function and the same network design. The journey from Atari to Bayesian inference is complete, and the quantile function is the thread that connects them.
+
+Looking back at this chapter, the reader should take away three main ideas.
+
+First, learning the full distribution of returns --- rather than just the mean --- leads to better performance, richer representations, and risk-sensitive decision-making.
+The distributional perspective is strictly more informative than the scalar perspective, and the extra information comes at moderate computational cost: instead of outputting one number per state-action pair, the network outputs a function of $\tau$ per state-action pair.
+
+Second, the Wasserstein distance is the natural metric for comparing distributions in this context, and its connection to quantile functions is what makes quantile regression the right computational tool.
+The pinball loss is not an arbitrary choice --- it is the sample-based estimator that minimizes the Wasserstein distance between the predicted and true quantile functions, and the Wasserstein contraction of the distributional Bellman operator ensures convergence.
+
+Third, the IQN architecture (cosine embedding, multiplicative merge, pinball loss) that emerged from the distributional RL community is exactly the architecture that GBC needs.
+The transition from RL to statistics is a matter of removing the Bellman recursion and replacing bootstrapped targets with observed data.
+The chapters that follow will demonstrate how far this simple idea can go.
+
+
+## Exercises {#sec-rl-exercises}
+
+::: {#exr-wasserstein-contraction}
+**Wasserstein contraction proof.**
+Prove that the distributional Bellman operator $\mathcal{T}^\pi$ is a $\gamma$-contraction in the 1-Wasserstein metric for a single-state MDP. Specifically, let $Z_1$ and $Z_2$ be two random variables, and define $\tilde{Z}_i = R + \gamma Z_i$ where $R$ is independent of both.
+
+(a) Using the quantile function representation $W_1(F, G) = \int_0^1 |F^{-1}(\tau) - G^{-1}(\tau)| \, d\tau$, show that $W_1(\tilde{Z}_1, \tilde{Z}_2) = \gamma \, W_1(Z_1, Z_2)$. *Hint*: Use the fact that affine transformations of quantile functions are quantile functions of the affine transformation.
+(b) Now consider a two-state MDP with transition matrix $P$ and discount factor $\gamma$. Explain in words why the expectation over transitions does not break the contraction.
+(c) Explain why the same proof fails if we replace $W_1$ with the total variation distance $d_{TV}(F, G) = \sup_A |F(A) - G(A)|$.
+:::
+
+::: {#exr-cvar-quantile}
+**CVaR from the quantile function.**
+Show that $\text{CVaR}_\alpha(Z) = \frac{1}{\alpha}\int_0^\alpha F_Z^{-1}(\tau) \, d\tau$ is equivalent to $\text{CVaR}_\alpha(Z) = \mathbb{E}[Z \mid Z \leq F_Z^{-1}(\alpha)]$ when $F_Z$ is continuous. Verify numerically for $Z \sim N(0, 1)$ and $\alpha = 0.05$ that the formula gives $\text{CVaR}_{0.05} \approx -2.063$.
+:::
+
+::: {#exr-toy-mdp}
+**Distributional RL on a chain MDP.**
+Consider a chain MDP with 5 states $\{1, 2, 3, 4, 5\}$, a single action, deterministic transitions $i \to i+1$ (with state 5 being terminal), and rewards $R(i) \sim N(i, 1)$. Set $\gamma = 0.9$.
+
+(a) Compute the true return distribution $Z(1)$ (the distribution of the total discounted return starting from state 1).
+(b) Implement quantile temporal-difference learning (Algorithm 6.1 from @bellemare2023distributional) with $m = 10$ quantiles and run it for 1000 episodes.
+(c) Plot the learned quantile function alongside the true quantile function. How does the number of quantiles $m$ affect accuracy?
+:::
+
+::: {#exr-bridge-action}
+**The "action" in GBC.**
+In the bridge between distributional RL and GBC (@tbl-rl-gbc-bridge), we noted that the action $a$ is absent in standard GBC regression. Consider two settings where an action-like variable is natural:
+
+(a) *Active learning*: An experimenter sequentially selects the next input $x_{n+1}$ at which to evaluate an expensive simulator. What plays the role of the state, action, and reward?
+(b) *Portfolio optimization*: An investor allocates wealth across $K$ assets. The quantile network takes as input the current market state $x$ and a portfolio weight vector $\omega$. What does the return distribution $Z(x, \omega)$ represent?
+
+For each setting, write down the objective in both RL notation and GBC notation, and explain why the bridge (@tbl-rl-gbc-bridge) applies.
+
+(c) Identify a third application domain where the full $(x, a, \tau)$ structure is natural, and explain the analogy.
+:::
+
+::: {#exr-c51-diffusion}
+**Diffusion error in C51.**
+Consider a distribution supported on two points: $P(Z = 0) = P(Z = 1) = 0.5$. Suppose C51 uses atoms at $\{0, 0.5, 1.0\}$.
+
+(a) Apply the distributional Bellman operator with $R = 0$ and $\gamma = 0.9$ to obtain the target distribution on $\{0, 0.45, 0.9\}$.
+(b) Project this target back onto the atoms $\{0, 0.5, 1.0\}$ using the categorical projection (distribute mass to nearest neighbors proportionally to distance).
+(c) Repeat the apply-then-project cycle 5 times and plot the resulting distribution at each step. How does the distribution change? This illustrates the diffusion error that motivated the move to QR-DQN.
+:::
+
+::: {#exr-wasserstein-quantile}
+**Wasserstein distance computation.**
+Compute the 1-Wasserstein distance between the following pairs of distributions analytically, then verify numerically:
+
+(a) $F = N(0, 1)$ and $G = N(\mu, 1)$ for $\mu = 0.5, 1, 2$. Show that $W_1(F, G) = |\mu|$.
+(b) $F = N(0, 1)$ and $G = N(0, \sigma^2)$ for $\sigma = 0.5, 1, 2$. Is there a closed form?
+(c) $F = \text{Uniform}(0, 1)$ and $G = \text{Beta}(2, 2)$. Compute $W_1$ using the quantile function representation.
+:::
+
+::: {#exr-cvar-bimodal}
+**CVaR for a bimodal distribution.**
+Let $Z$ be a mixture: with probability $p = 0.7$, $Z \sim N(5, 1)$; with probability $1 - p = 0.3$, $Z \sim N(-3, 0.5)$. This models a strategy that usually succeeds but occasionally fails badly.
+
+(a) Compute $\mathbb{E}[Z]$, $\text{Var}(Z)$, and sketch the density.
+(b) Compute $\text{CVaR}_\alpha$ for $\alpha \in \{0.05, 0.1, 0.3, 0.5, 1.0\}$ using Monte Carlo simulation.
+(c) An alternative strategy has $Z' \sim N(2.6, 0.5)$ (same mean as the mixture but lower variance). Compare the CVaR profiles of $Z$ and $Z'$. At what risk level $\alpha$ does the safe strategy become preferable?
+(d) Explain how IQN would enable an agent to switch between the two strategies depending on the desired risk level $\alpha$, without retraining.
+:::
+
+::: {#exr-rl-gbc-code}
+**From RL loop to supervised learning.**
+Starting from the quantile TD code in @sec-rl-tabular-qtd, modify it to perform *supervised* quantile regression instead. This exercise makes the bridge from distributional RL to GBC concrete in code.
+
+(a) Generate 1000 training pairs $(x_i, y_i)$ where $x_i \sim \text{Uniform}(-3, 3)$ and $y_i = \sin(x_i) + 0.3\varepsilon_i$ with $\varepsilon_i \sim N(0, 1)$.
+(b) Train a simple neural network (two hidden layers, 64 units each, with cosine embedding for $\tau$) using the pinball loss to learn the conditional quantile function $F_{Y|X=x}^{-1}(\tau)$ following the GBC objective (@eq-gbc-objective).
+(c) Plot the learned quantile function at $\tau \in \{0.1, 0.5, 0.9\}$ as a function of $x$, overlaid on the training data. Verify that roughly 10\% of points fall below the $\tau = 0.1$ curve, 50\% below the $\tau = 0.5$ curve, and 90\% below the $\tau = 0.9$ curve.
+(d) Explain in your own words what changed from the RL version (no bootstrapped targets, no temporal structure, no discount factor, no target network) and what stayed the same (pinball loss, cosine embedding, stochastic $\tau$ sampling, quantile function output).
+(e) Compare the training time and stability of your GBC implementation to the quantile TD implementation. Which converges faster, and why?
+:::

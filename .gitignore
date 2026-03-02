@@ -1,0 +1,8 @@
+# Ignore everything
+*
+
+# Track only these
+!*.qmd
+!*.yml
+!*.yaml
+!.gitignore

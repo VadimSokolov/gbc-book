@@ -1,0 +1,401 @@
+# Proofs and Convergence Theory {#sec-proofs}
+
+This appendix collects the main approximation-theoretic and convergence results that underpin the GBC framework. The proofs are organized to follow the logical chain: universal approximation guarantees that neural networks can represent quantile functions (Section A.1), the CRPS bound connects pointwise quantile accuracy to distributional accuracy (Section A.2), consistency establishes that the empirical risk minimizer converges to the true quantile function (Section A.3), the CRPS convergence theorem shows that the distributional accuracy of the IQN improves as capacity and data grow (Section A.4), minimax rates quantify the optimal speed of convergence and compositional depth breaks the curse of dimensionality (Section A.5--A.6), and the autoregressive noise outsourcing theorem extends the entire program to multivariate parameters (Section A.7).
+
+Throughout, we use the following notation. The input domain is $\mathcal{X} \subseteq \mathbb{R}^d$, assumed compact unless otherwise stated. The conditional quantile function is $Q^*(\tau, x) = F_{Y|X}^{-1}(\tau \mid x)$ for $\tau \in (0,1)$ and $x \in \mathcal{X}$. The pinball (check) loss is $\rho_\tau(u) = u(\tau - \mathbf{1}(u < 0))$. The CRPS of a predictive quantile function $G$ at observation $y$ is $\mathrm{CRPS}(G, y) = 2\int_0^1 \rho_\tau(y - G(\tau, x))\,d\tau$. A ReLU network class $\mathcal{G}(L, W)$ consists of feedforward networks with depth $L$, maximum width $W$, and ReLU activations $\sigma(z) = \max(0, z)$.
+
+
+## Universal Approximation {#sec-proof-universal}
+
+The universal approximation theorem guarantees that feedforward neural networks can approximate any continuous function on a compact domain to arbitrary accuracy. This result, due to @hornik1989multilayer, provides the existence guarantee for GBC: the conditional quantile function $Q^*(\tau, x)$ can be represented by a neural network.
+
+::: {.callout-tip appearance="simple" title="Theorem A.1: Universal Approximation (Hornik, Stinchcombe, and White 1989)"}
+Let $K \subset \mathbb{R}^p$ be compact and let $f : K \to \mathbb{R}$ be continuous. For any $\varepsilon > 0$, there exists a single-hidden-layer network
+$$
+h(z) = \sum_{j=1}^{m} \alpha_j \, \sigma(w_j^\top z + b_j) + c
+$$
+with $m$ hidden units, where $\sigma$ is any non-constant, bounded, monotone-increasing activation function, such that $\sup_{z \in K} |h(z) - f(z)| < \varepsilon$.
+:::
+
+*Proof.* The proof proceeds via the Hahn-Banach theorem. Define the set $\mathcal{H} = \{z \mapsto \sigma(w^\top z + b) : w \in \mathbb{R}^p, b \in \mathbb{R}\}$. Suppose, for contradiction, that the closed linear span of $\mathcal{H}$ is not all of $C(K)$. By the Hahn-Banach theorem, there exists a nonzero bounded linear functional $L$ on $C(K)$ that annihilates every element of $\mathcal{H}$. By the Riesz representation theorem, $L$ corresponds to a nonzero signed measure $\mu$ on $K$ such that $\int \sigma(w^\top x + b)\,d\mu(x) = 0$ for all $(w, b) \in \mathbb{R}^p \times \mathbb{R}$. The Fourier analysis argument of @leshno1993multilayer then shows that this integral condition forces $\mu = 0$, a contradiction. Concretely, @leshno1993multilayer show that if $\sigma$ is locally bounded and not a polynomial (which holds for any non-constant bounded monotone-increasing function), then the only measure annihilating all half-space sigmoids is the zero measure. Hence $\mathrm{span}(\mathcal{H})$ is dense in $C(K)$, which is precisely the claim. See @leshno1993multilayer for the complete proof. $\square$
+
+The original theorem uses sigmoidal activations. The extension to ReLU activations follows from the observation that ReLU networks can approximate any continuous function through piecewise linear interpolation. @schmidt-hieber2020nonparametric provides the ReLU-specific result with explicit rate bounds.
+
+::: {.callout-tip appearance="simple" title="Theorem A.2: Universal Approximation for Deep ReLU Networks"}
+Let $K \subset \mathbb{R}^p$ be compact and let $f : K \to \mathbb{R}$ be continuous. For any $\varepsilon > 0$, there exists a ReLU network $h_\phi : K \to \mathbb{R}$ with depth $L$ and total parameters $N$ such that $\sup_{z \in K} |h_\phi(z) - f(z)| < \varepsilon$.
+
+Moreover, if $f$ is $\beta$-Holder smooth (i.e., $f \in C^\beta(K)$ with $\beta > 0$), then the approximation can be achieved with $L = O(\log(1/\varepsilon))$ layers and $N = O(\varepsilon^{-p/\beta})$ parameters. (The exact exponent depends on the norm and domain; @schmidt2020nonparametric show that $O(\varepsilon^{-p/\beta} \log(1/\varepsilon))$ parameters are required in general. We state the simplified form; see the reference for precise conditions.)
+:::
+
+The logarithmic depth is significant: deep networks achieve the same approximation accuracy as wide shallow networks but with exponentially fewer parameters when the target function has compositional structure. This is the approximation-theoretic basis for the advantage of depth.
+
+The IQN architecture processes $(\tau, x)$ via a cosine embedding $\varphi(\tau) = (\cos(\pi j \tau))_{j=0}^{M-1}$ and an elementwise product $f_x(x) \odot f_\tau(\varphi(\tau))$, followed by fully connected layers. To apply Theorem A.1, we must verify that this architecture retains universal approximation.
+
+::: {.callout-tip appearance="simple" title="Proposition A.1: Universal Approximation of the IQN Architecture"}
+Let $\mathcal{X} \subset \mathbb{R}^d$ be compact and let $Q^*(\tau, x)$ be a continuous conditional quantile function on $[0,1] \times \mathcal{X}$. For any $\varepsilon > 0$, there exists an IQN with cosine embedding dimension $M$ and hidden dimension $r$ such that $\sup_{\tau \in [0,1],\, x \in \mathcal{X}} |G_\phi(\tau, x) - Q^*(\tau, x)| < \varepsilon$.
+:::
+
+*Proof.* The cosine embedding $\varphi : [0,1] \to \mathbb{R}^M$ is a fixed continuous injection (for $M \geq 2$). Let $r = p + q$ be the hidden dimension. Define $f_x(x) = [h_x(x); \mathbf{1}_q] \in \mathbb{R}^r$ and $f_\tau(\varphi(\tau)) = [\mathbf{1}_p; h_\tau(\tau)] \in \mathbb{R}^r$, where the constant blocks are realized via bias terms. Then
+$$
+f_x(x) \odot f_\tau(\varphi(\tau)) = [h_x(x); \, h_\tau(\tau)],
+$$
+which is a concatenation of features from both branches. The subsequent fully connected layers applied to this concatenation form a standard feedforward network on the joint representation $(h_x(x), h_\tau(\tau))$. By Theorem A.1, this is a universal approximator on the compact domain $[0,1] \times \mathcal{X}$ for sufficiently large $p$, $q$, and hidden widths. $\square$
+
+
+## CRPS Approximation Bound {#sec-proof-crps}
+
+The CRPS measures the quality of a full predictive distribution. The following result shows that pointwise accuracy of quantile estimates translates directly into CRPS accuracy, with a tight multiplicative constant.
+
+::: {.callout-tip appearance="simple" title="Theorem A.3: CRPS Approximation Bound"}
+Let $Q^*(\tau, x)$ denote the true conditional quantile function and $G_\phi(\tau, x)$ an approximation satisfying $\sup_{\tau \in [0,1]} |G_\phi(\tau, x) - Q^*(\tau, x)| \leq \varepsilon$ for a given $x$. Then for any observation $y$,
+$$
+|\mathrm{CRPS}(G_\phi, y) - \mathrm{CRPS}(Q^*, y)| \leq 2\varepsilon.
+$$
+:::
+
+*Proof.* By @gneiting2007strictly, the CRPS admits the quantile representation
+$$
+\mathrm{CRPS}(F, y) = 2\int_0^1 \rho_\tau(y - F^{-1}(\tau))\,d\tau.
+$$
+The pinball loss satisfies the Lipschitz bound $|\rho_\tau(y - q_1) - \rho_\tau(y - q_2)| \leq |q_1 - q_2|$ for all $q_1, q_2 \in \mathbb{R}$. To verify this, note that $\rho_\tau(y - q)$ is piecewise linear in $q$ with slopes $-\tau$ (when $q < y$) and $1 - \tau$ (when $q > y$). Both slopes are bounded in absolute value by $\max(\tau, 1-\tau) \leq 1$, so $\rho_\tau$ is 1-Lipschitz in $q$.
+
+Applying this bound under the integral:
+$$
+\begin{aligned}
+|\mathrm{CRPS}(G_\phi, y) - \mathrm{CRPS}(Q^*, y)| &= 2\left|\int_0^1 \left[\rho_\tau(y - G_\phi(\tau,x)) - \rho_\tau(y - Q^*(\tau, x))\right] d\tau\right| \\
+&\leq 2\int_0^1 |G_\phi(\tau,x) - Q^*(\tau, x)|\,d\tau \leq 2\varepsilon. \quad \square
+\end{aligned}
+$$
+
+::: {.callout-note appearance="simple" title="Remark A.1: Tightness"}
+The constant $2$ is tight. If $G_\phi(\tau, x) = Q^*(\tau, x) + \varepsilon$ for all $\tau$ (a uniform upward shift), then $\mathrm{CRPS}(G_\phi, y) - \mathrm{CRPS}(Q^*, y) = 2\varepsilon$ for $y$ below the support of $Q^*$. The bound cannot be improved without additional assumptions.
+:::
+
+The CRPS bound can also be expressed in terms of the Wasserstein distance. Recall from @sec-noise-outsourcing that the 1-Wasserstein distance between distributions $F$ and $G$ on $\mathbb{R}$ is
+$$
+W_1(F, G) = \int_0^1 |F^{-1}(\tau) - G^{-1}(\tau)|\,d\tau.
+$$
+
+::: {.callout-tip appearance="simple" title="Corollary A.1: CRPS and Wasserstein Distance"}
+The expected CRPS satisfies
+$$
+\mathbb{E}_Y[\mathrm{CRPS}(G_\phi, Y)] = 2\int_0^1 \mathbb{E}_Y[\rho_\tau(Y - G_\phi(\tau, X))]\,d\tau,
+$$
+and when $G_\phi$ is the quantile function of a distribution $\hat{F}$, the expected CRPS decomposes as
+$$
+\mathbb{E}_Y[\mathrm{CRPS}(\hat{F}, Y)] = W_1(F_{Y|X}, \hat{F}) + \text{sharpness term}.
+$$
+The sharpness term is $-\tfrac{1}{2}\mathbb{E}|Y - Y'|$ where $Y, Y' \sim F_{Y|X}$ are independent draws (this is a property of the true distribution only). The complete identity from @gneiting2007strictly is: $\mathbb{E}_G[\mathrm{CRPS}(F, Y)] = W_1(F, G) - \tfrac{1}{2}\mathbb{E}_G|Y - Y'|$, where the expectation on the left is over $Y \sim G$ and the expectation on the right is over two independent draws $Y, Y' \sim G$.
+:::
+
+This connects the training objective (integrated pinball loss over random $\tau$) directly to the Wasserstein metric on distributions. Minimizing the pinball loss is equivalent to minimizing the Wasserstein-1 distance between the learned and true conditional distributions.
+
+
+## Consistency of the IQN Estimator {#sec-proof-consistency}
+
+The consistency theorem establishes that the empirical pinball-loss minimizer over a growing class of neural networks converges to the true conditional quantile function as the sample size increases.
+
+::: {.callout-tip appearance="simple" title="Theorem A.4: Consistency of the Neural Quantile Estimator"}
+Assume:
+
+1. $\mathcal{X} \subset \mathbb{R}^d$ is compact and $Y$ is bounded almost surely.
+2. The conditional quantile function $Q^*(\tau, x)$ is $\beta$-Holder continuous on $[0,1] \times \mathcal{X}$ for some $\beta > 0$.
+3. The network class $\mathcal{G}_n = \mathcal{G}(L_n, W_n)$ consists of ReLU networks whose depth $L_n$ and width $W_n$ satisfy $L_n W_n \log(L_n W_n) = o(n / \log n)$.
+
+Then the empirical quantile loss minimizer
+$$
+\hat{G}_n = \arg\min_{G \in \mathcal{G}_n} \frac{1}{n} \sum_{i=1}^{n} \int_0^1 \rho_\tau(Y_i - G(\tau, X_i))\,d\tau
+$$
+satisfies
+$$
+\mathbb{E}\!\left[\int_0^1 \rho_\tau(Y - \hat{G}_n(\tau, X))\,d\tau\right] \longrightarrow \inf_G \mathbb{E}\!\left[\int_0^1 \rho_\tau(Y - G(\tau, X))\,d\tau\right]
+$$
+as $n \to \infty$. (Convergence is in expectation over the training set distribution, via the Rademacher complexity bound; almost sure or in-probability statements require additional arguments.)
+:::
+
+*Proof.* The proof uses the standard bias--variance decomposition for empirical risk minimization.
+
+*Approximation error.* By Proposition A.1, for any $\delta > 0$ there exists a network $G^*_n \in \mathcal{G}_n$ (for $n$ large enough) with $\sup_{\tau,x} |G^*_n(\tau,x) - Q^*(\tau, x)| < \delta$. The $\beta$-Holder assumption combined with the approximation rates of @schmidt-hieber2020nonparametric shows that $\inf_{G \in \mathcal{G}_n} \|G - Q^*\|_\infty = O(n^{-2\beta/(2\beta+d+1)})$ when the network architecture is chosen to balance approximation and estimation.
+
+*Estimation error.* Define the integrated quantile loss $L(G) = \int_0^1 \rho_\tau(y - G(\tau,x))\,d\tau$. By the Lipschitz property of $\rho_\tau$ (used in Theorem A.3), $L$ is Lipschitz in $G$. The Rademacher complexity of the function class $\{x \mapsto L(G(x)) : G \in \mathcal{G}_n\}$ is bounded by $O(\sqrt{L_n W_n \log(L_n W_n) / n})$ via Lipschitz composition and the covering number bounds for ReLU networks [@padilla2022quantile, Theorem 2]. The condition $L_n W_n \log(L_n W_n) = o(n/\log n)$ ensures this vanishes.
+
+*Combining.* Let $R(G) = \mathbb{E}[L(G)]$ denote the population risk, $\hat{R}_n(G) = n^{-1}\sum_{i=1}^n L(G(X_i, Y_i))$ the empirical risk, and $R^* = \inf_G R(G)$ the Bayes risk. Then
+$$
+\begin{aligned}
+R(\hat{G}_n) - R^* &\leq \underbrace{[R(\hat{G}_n) - \hat{R}_n(\hat{G}_n)]}_{\text{estimation}} + \underbrace{[\hat{R}_n(\hat{G}_n) - \hat{R}_n(G^*_n)]}_{\leq\, 0} \\
+&\quad + \underbrace{[\hat{R}_n(G^*_n) - R(G^*_n)]}_{\text{estimation}} + \underbrace{[R(G^*_n) - R^*]}_{\text{approximation}}.
+\end{aligned}
+$$
+The second term is non-positive by definition of $\hat{G}_n$ as the empirical risk minimizer. The first and third terms vanish by uniform convergence (Rademacher complexity bound). The fourth term vanishes by the approximation rate. Since $\mathrm{CRPS}(G, y) = 2L(G) + \text{const}(y)$ by Theorem A.3, convergence of the population risk $R$ implies convergence of the expected CRPS. $\square$
+
+A practical concern is that the learned quantile function $\hat{G}_n(\tau, x)$ may not be monotone in $\tau$, leading to *quantile crossing*: $\hat{G}_n(\tau_1, x) > \hat{G}_n(\tau_2, x)$ for some $\tau_1 < \tau_2$. @chernozhukov2010quantile showed that non-crossing can be enforced by post-processing:
+
+::: {.callout-tip appearance="simple" title="Proposition A.2: Rearrangement Eliminates Crossing"}
+Let $\hat{G}(\tau, x)$ be any (possibly crossing) quantile estimator. Define its non-decreasing rearrangement $\hat{G}^{\uparrow}(\tau, x) = \inf\{y : \lambda\{s \in [0,1] : \hat{G}(s, x) \leq y\} \geq \tau\}$, where $\lambda$ denotes Lebesgue measure. Then $\hat{G}^{\uparrow}(\cdot, x)$ is non-decreasing and satisfies
+$$
+\int_0^1 \rho_\tau(y - \hat{G}^{\uparrow}(\tau, x))\,d\tau \leq \int_0^1 \rho_\tau(y - \hat{G}(\tau, x))\,d\tau
+$$
+for every $y$. The rearranged estimator has lower integrated pinball loss than the original.
+:::
+
+In practice, the IQN architecture with cosine embedding and the pinball loss rarely produces significant crossing, because the cosine embedding encourages smooth variation in $\tau$ and the pinball loss penalizes crossing indirectly. When crossing does occur, the rearrangement above provides a simple fix.
+
+Combining the approximation and estimation bounds yields an explicit convergence rate for the IQN estimator.
+
+::: {.callout-tip appearance="simple" title="Corollary A.2: Convergence Rate of the IQN Estimator"}
+Under the assumptions of Theorem A.4, if the network class $\mathcal{G}_n$ has depth $L_n = O(\log n)$ and width $W_n = O(n^{(d+1)/(2(2\beta+d+1))})$, then
+$$
+\mathbb{E}\!\left[\int_0^1 \rho_\tau(Y - \hat{G}_n(\tau, X))\,d\tau\right] - R^* = O\!\left(n^{-2\beta/(2\beta + d + 1)}\right).
+$$
+Equivalently, the expected CRPS satisfies $\mathbb{E}[\mathrm{CRPS}(\hat{G}_n, Y)] - \mathrm{CRPS}(Q^*, Y) = O(n^{-2\beta/(2\beta+d+1)})$.
+:::
+
+The exponent $d+1$ (rather than $d$) reflects the fact that the quantile function $Q^*(\tau, x)$ lives on the $(d+1)$-dimensional domain $[0,1] \times \mathcal{X}$, with $\tau$ contributing one additional dimension. In practice, the $\tau$-direction is often smoother than the $x$-directions (the quantile function varies smoothly across quantile levels for continuous distributions), so this worst-case rate may be conservative.
+
+Corollary A.2 gives the IQN convergence rate $n^{-2\beta/(2\beta+d+1)}$, which treats $\tau$ as an additional input dimension. Theorem A.6 below gives the minimax lower bound $n^{-2\beta/(2\beta+d)}$ for estimating the quantile function in $d$ covariates. The IQN rate is thus slightly slower than the minimax bound, by the factor accounting for $\tau$ as an extra dimension. Whether an IQN can achieve the minimax rate $n^{-2\beta/(2\beta+d)}$ (by not treating $\tau$ as a full dimension, for example by exploiting the known smoothness of $Q^*$ in $\tau$) is an open question; see @dabney2018implicit for discussion of the architectural implications.
+
+Consistency of the quantile estimator has direct implications for prediction interval coverage. If $\hat{G}_n(\alpha/2, x)$ and $\hat{G}_n(1 - \alpha/2, x)$ converge uniformly to $Q^*(\alpha/2, x)$ and $Q^*(1-\alpha/2, x)$, then the prediction interval $[\hat{G}_n(\alpha/2, x), \hat{G}_n(1 - \alpha/2, x)]$ achieves asymptotically correct coverage:
+$$
+P\!\left(Y \in [\hat{G}_n(\alpha/2, X), \, \hat{G}_n(1 - \alpha/2, X)]\right) \to 1 - \alpha \quad \text{as } n \to \infty.
+$$
+This holds because the event $Y \in [Q^*(\alpha/2, x), Q^*(1-\alpha/2, x)]$ has probability exactly $1 - \alpha$ by definition of the conditional quantiles, and the uniform convergence of $\hat{G}_n$ to $Q^*$ implies convergence of the coverage probability. For finite-sample coverage guarantees, the conformal calibration methods developed in @sec-calibration provide a complementary approach.
+
+
+## CRPS Convergence of the IQN {#sec-proof-crps-convergence}
+
+The consistency result in Theorem A.4 establishes convergence of the integrated pinball loss, which is a population-level risk. In practice, we care about the CRPS of our learned model on new observations --- that is, we want the full predictive distribution produced by the IQN to converge to the true conditional distribution, not just in terms of a training objective but in terms of the distributional scoring rule that practitioners actually report. The following theorem makes this connection precise by showing that uniform convergence of the pinball loss over quantile levels implies convergence of the CRPS.
+
+The key insight is that the CRPS is an integral of the pinball loss over $\tau \in (0,1)$. If the IQN minimizes the pinball loss uniformly well for every quantile level --- not just on average over randomly sampled $\tau$ values --- then the integrated loss (which is the CRPS up to a factor of 2) must also converge. This is a stronger statement than Theorem A.4, which only requires convergence of the average integrated loss. The upgrade from average to uniform convergence requires a covering argument over the quantile index $\tau$.
+
+::: {.callout-tip appearance="simple" title="Theorem A.5: CRPS Convergence of the IQN"}
+Under the assumptions of Theorem A.4, suppose additionally that the conditional density $f_{Y|X}(y|x)$ is bounded above by $\bar{f} < \infty$ and bounded below by $\underline{f} > 0$ on the support of $Y$ given $X$. Then the IQN estimator $\hat{G}_n$ satisfies
+$$
+\mathbb{E}\!\left[\mathrm{CRPS}(\hat{G}_n, Y) - \mathrm{CRPS}(Q^*, Y)\right] = O\!\left(n^{-2\beta/(2\beta + d + 1)}\right),
+$$
+where the expectation is over both the training data and a new observation $(X, Y)$.
+:::
+
+*Proof.* We proceed in three steps: discretization over $\tau$, uniform convergence at a finite grid, and integration.
+
+*Step 1: Discretization.* Fix $\delta > 0$ and let $\tau_1, \ldots, \tau_K$ be a uniform grid on $(0,1)$ with spacing $\delta$, so $K = \lceil 1/\delta \rceil$. For any quantile function $G$, the integrated pinball loss can be approximated by its Riemann sum:
+$$
+\left|\int_0^1 \rho_\tau(y - G(\tau,x))\,d\tau - \delta\sum_{k=1}^K \rho_{\tau_k}(y - G(\tau_k, x))\right| \leq \delta \cdot \omega_G(\delta),
+$$
+where $\omega_G(\delta) = \sup_{|\tau - \tau'| \leq \delta} |G(\tau, x) - G(\tau', x)|$ is the modulus of continuity of $G$ in $\tau$. For the true quantile function $Q^*$, the bounded density assumption implies $\omega_{Q^*}(\delta) \leq \delta / \underline{f}$, so the Riemann approximation error is $O(\delta^2)$.
+
+*Step 2: Uniform convergence at fixed $\tau$.* For each fixed $\tau_k$, the pointwise pinball loss minimizer over $\mathcal{G}_n$ converges at the rate established in Theorem A.4. To handle all $K$ grid points simultaneously, we apply a union bound. The Rademacher complexity bound from the consistency proof gives, for each $\tau_k$,
+$$
+\sup_{G \in \mathcal{G}_n} \left|\hat{R}_n^\tau(G) - R^\tau(G)\right| = O_p\!\left(\sqrt{\frac{L_n W_n \log(L_n W_n)}{n}}\right),
+$$
+where $R^\tau(G) = \mathbb{E}[\rho_\tau(Y - G(\tau, X))]$ and $\hat{R}_n^\tau$ is its empirical counterpart. Since the bound does not depend on $\tau$, uniform convergence over the grid follows immediately --- no union bound penalty is needed. The empirical minimizer at each grid point converges to the population minimizer $Q^*(\tau_k, \cdot)$ at the same rate as in Corollary A.2.
+
+*Step 3: Integration.* Combining Steps 1 and 2, we have
+$$
+\begin{aligned}
+\mathbb{E}[\mathrm{CRPS}(\hat{G}_n, Y)] - \mathbb{E}[\mathrm{CRPS}(Q^*, Y)]
+&= 2\int_0^1 \left[\mathbb{E}[\rho_\tau(Y - \hat{G}_n(\tau, X))] - \mathbb{E}[\rho_\tau(Y - Q^*(\tau, X))]\right]d\tau \\
+&\leq 2\int_0^1 \sup_x |R^\tau(\hat{G}_n) - R^\tau(Q^*)|\,d\tau.
+\end{aligned}
+$$
+By the Lipschitz bound on $\rho_\tau$ and the $\varepsilon$-approximation guarantee, the integrand at each $\tau$ is bounded by the approximation error plus the estimation error. Since both are $O(n^{-2\beta/(2\beta+d+1)})$ uniformly in $\tau$ (the approximation rate from Theorem A.2 holds uniformly and the Rademacher bound is $\tau$-independent), the integral inherits the same rate. $\square$
+
+The practical implication of Theorem A.8 is reassuring. When we train an IQN by sampling random $\tau$ values during each SGD step, the stochastic approximation to the integral $\int_0^1 \rho_\tau(\cdot)\,d\tau$ converges to the true integral by the law of large numbers over training iterations. The theorem then guarantees that the resulting CRPS on held-out data converges to the CRPS of the oracle quantile function. In other words, the gap between the CRPS we report on test data and the best possible CRPS vanishes at a quantifiable rate. This is the sense in which the IQN is a consistent distributional estimator, not merely a consistent point estimator.
+
+It is worth noting what the bounded density assumption buys us. Without the lower bound $\underline{f} > 0$, the quantile function $Q^*(\tau, x)$ could have vertical segments (flat regions in the CDF correspond to jumps in the quantile function), making the Riemann approximation in Step 1 arbitrarily poor. The upper bound $\bar{f} < \infty$ ensures that the quantile function is Lipschitz in $\tau$, which controls the approximation error in the $\tau$-direction separately from the $x$-direction. For distributions with atoms or unbounded densities, the CRPS convergence still holds but at a potentially slower rate that depends on the regularity of the quantile function near the boundary.
+
+
+## Minimax Rates {#sec-proof-minimax}
+
+The minimax rate characterizes the best possible convergence speed, uniformly over a function class. For quantile regression with ReLU networks, @padilla2022quantile establish the following.
+
+::: {.callout-tip appearance="simple" title="Theorem A.6: Minimax Rate for Quantile Regression with ReLU Networks"}
+Let $Q^*(\tau, x)$ be $\beta$-Holder smooth in $x \in [0,1]^d$ for each $\tau \in (0,1)$, with $\beta > 0$. The minimax rate for estimating $Q^*$ from $n$ i.i.d. observations $(X_i, Y_i)_{i=1}^n$ is
+$$
+\inf_{\hat{Q}} \sup_{Q^* \in \mathcal{H}(\beta, d)} \mathbb{E}\!\left[\int_0^1 \rho_\tau(Y - \hat{Q}(\tau, X))\,d\tau\right] \asymp n^{-2\beta/(2\beta + d)},
+$$
+where the infimum is over all estimators and $\mathcal{H}(\beta, d)$ is the $\beta$-Holder class on $[0,1]^d$. A ReLU network with $O(n^{d/(2\beta+d)})$ parameters and depth $O(\log n)$ achieves this rate.
+:::
+
+The rate $n^{-2\beta/(2\beta+d)}$ reveals the curse of dimensionality: as $d$ grows, convergence slows dramatically. For $\beta = 2$ and $d = 20$, the rate is $n^{-1/6} \approx n^{-0.17}$. This motivates the compositional approach developed in the next section.
+
+For kernel-based quantile regression (e.g., Nadaraya--Watson), the minimax rate is also $n^{-2\beta/(2\beta+d)}$ when the function is merely Holder smooth. The rates coincide for flat (non-compositional) function classes. The advantage of neural networks emerges only when the target function has additional structure, as we discuss next.
+
+
+## Compositional Structure and Depth {#sec-proof-compositional}
+
+The key theoretical advantage of deep networks over kernel methods is their ability to exploit *compositional structure*. The quantile transport map naturally possesses this structure when the conditional distribution depends on $x$ through a lower-dimensional summary.
+
+::: {.callout-tip appearance="simple" title="Definition A.1: Compositional Structure"}
+A function $Q : [0,1] \times \mathbb{R}^d \to \mathbb{R}$ has *compositional structure* with intrinsic dimension $k$ if
+$$
+Q(\tau, x) = g(\tau, f(x)),
+$$ {#eq-proof-comp}
+where $f : \mathbb{R}^d \to \mathbb{R}^k$ is a feature map with $k \ll d$, and $g : [0,1] \times \mathbb{R}^k \to \mathbb{R}$ is the reduced quantile function.
+:::
+
+This structure arises naturally in several GBC settings. When $S(Z_{1:n})$ is a $k$-dimensional sufficient statistic, the predictive quantile function depends on the data only through $S$ (see @sec-prediction), so the map $f$ is simply the sufficient summary. When a neural network learns to compress inputs into a bottleneck layer of dimension $k$, the post-bottleneck layers implement $g$, with the bottleneck itself serving as $f$. And when the response depends on a few combinations of the inputs --- for example, the radial distance $r = \|x\|$ in a rotationally symmetric problem --- $f$ captures those combinations and $g$ maps them to quantile predictions.
+
+::: {.callout-tip appearance="simple" title="Theorem A.7: Minimax Rate for Compositional Quantile Functions"}
+Let $Q(\tau, x) = g(\tau, f(x))$ as in @eq-proof-comp, where $f : \mathbb{R}^d \to \mathbb{R}^k$ and $g : [0,1] \times \mathbb{R}^k \to \mathbb{R}$ are each $\beta$-Holder smooth. A ReLU network estimator $\hat{Q}$ with depth $O(\log n)$ achieves
+$$
+\mathbb{E}\!\left[\int_0^1 \int |\hat{Q}(\tau, s) - Q(\tau, s)|^2 \, dP_S(s)\, d\tau\right] = O\!\left(n^{-2\beta/(2\beta + k + 1)}\right),
+$$
+where $P_S$ is the distribution of $S = f(X)$ and the rate depends on $k$ (the intrinsic dimension), not $d$ (the ambient dimension).
+:::
+
+*Proof sketch.* The argument, following @schmidt-hieber2020nonparametric and @montanelli2020error, proceeds in two steps.
+
+*Step 1: Layer-wise approximation.* The network allocates its initial layers to approximating $f : \mathbb{R}^d \to \mathbb{R}^k$ and its final layers to approximating $g : [0,1] \times \mathbb{R}^k \to \mathbb{R}$. Each component is a function on a domain of dimension at most $\max(d, k+1)$, but the critical observation is that the *estimation* complexity is governed by the lower-dimensional component. The first layers learn $f$ from the full $d$-dimensional input, but $f$ is a fixed map that needs to be learned only once. The stochastic component --- the quantile variation in $\tau$ --- operates in the $(k+1)$-dimensional space $[0,1] \times \mathbb{R}^k$.
+
+*Step 2: Rate calculation.* The approximation error for $g$ on $[0,1] \times \mathbb{R}^k$ scales as $O(N_g^{-2\beta/(k+1)})$ where $N_g$ is the number of parameters allocated to approximating $g$. The estimation error (via Rademacher complexity) scales as $O(\sqrt{N_g \log N_g / n})$. Balancing gives $N_g \asymp n^{(k+1)/(2\beta+k+1)}$ and the overall rate $n^{-2\beta/(2\beta+k+1)}$. $\square$
+
+The improvement from exploiting compositional structure can be dramatic:
+
+| Setting | Effective dim | Rate | Value at $n = 10^4$ |
+|---------|:---:|:---:|:---:|
+| Kernel, $d = 20$, $\beta = 2$ | $20$ | $n^{-4/24} = n^{-0.17}$ | 0.19 |
+| Neural, $d = 20$, $k = 3$, $\beta = 2$ | $4$ | $n^{-4/8} = n^{-0.50}$ | 0.01 |
+| Neural, $d = 20$, $k = 1$, $\beta = 2$ | $2$ | $n^{-4/6} = n^{-0.67}$ | 0.005 |
+
+: Convergence rates for different estimators and effective dimensions. {#tbl-proof-rates}
+
+When the intrinsic dimension $k$ is small, the neural network rate is vastly superior to the kernel rate. This explains the empirical success of IQN on high-dimensional problems with underlying low-dimensional structure.
+
+
+## Minimax Rate Proof Sketches for Deep Compositional Networks {#sec-proof-minimax-deep}
+
+The rates in Theorem A.7 are consequences of a deeper result about how deep ReLU networks achieve minimax-optimal approximation for smooth functions of smooth functions. We sketch the three key steps of the argument here, following @schmidt-hieber2020nonparametric and @montanelli2020error, because the ideas illuminate why depth is essential and why shallow methods cannot match these rates.
+
+The setting is the following. Suppose the target function has a multi-level compositional structure $Q = g_L \circ g_{L-1} \circ \cdots \circ g_1$, where each $g_\ell : \mathbb{R}^{d_\ell} \to \mathbb{R}^{d_{\ell+1}}$ is $\beta$-Holder smooth and the intermediate dimensions $d_\ell$ are small. For the quantile transport map, a natural two-level composition is $Q(\tau, x) = g(\tau, f(x))$ with $g_1 = f$ and $g_2 = g$, but the argument extends to arbitrary depth.
+
+*Step (a): Approximation theory for compositions.* The core observation is that a deep ReLU network can approximate a composition $g_L \circ \cdots \circ g_1$ by allocating separate blocks of layers to each component $g_\ell$. A standard ReLU network with $O(\varepsilon^{-d_\ell/\beta})$ parameters can approximate a $\beta$-smooth function $g_\ell : \mathbb{R}^{d_\ell} \to \mathbb{R}^{d_{\ell+1}}$ to within $\varepsilon$ in the supremum norm (Theorem A.2). When the components are stacked, the errors compose: if $g_\ell$ is approximated to within $\varepsilon_\ell$, the overall error is controlled by $\sum_\ell C_\ell \varepsilon_\ell$ where $C_\ell$ depends on the Lipschitz constants of the subsequent layers. The total number of parameters is $\sum_\ell O(\varepsilon_\ell^{-d_\ell/\beta})$, and optimizing over the allocation of accuracy across layers gives a total parameter count that depends on $\max_\ell d_\ell$ rather than the ambient input dimension $d$. This is the approximation-theoretic mechanism by which depth breaks the curse of dimensionality. A shallow network, by contrast, must approximate the composed function monolithically, paying the full $O(\varepsilon^{-d/\beta})$ cost.
+
+*Step (b): Covering number bounds.* To convert approximation rates into estimation rates, we need to control the complexity of the network class. The $\varepsilon$-covering number $\mathcal{N}(\varepsilon, \mathcal{G}(L, W, S), \|\cdot\|_\infty)$ of a ReLU network class with depth $L$, width $W$, and $S$ total parameters satisfies
+$$
+\log \mathcal{N}(\varepsilon, \mathcal{G}(L, W, S), \|\cdot\|_\infty) \leq C \cdot S \cdot L \cdot \log(W / \varepsilon)
+$$ {#eq-covering-number}
+for a universal constant $C$. This bound, due to @bartlett2019nearly, is the sharpest available and is crucial because it scales linearly in the number of parameters $S$ rather than exponentially in the depth $L$. The linear scaling ensures that deeper networks do not automatically incur a heavier statistical penalty. The factor of $L$ in the bound reflects the fact that deeper networks can represent sharper functions (the Lipschitz constant grows exponentially with depth in the worst case), but for the compositional architectures we consider, the Lipschitz constant of each layer is bounded, keeping the overall covering number under control.
+
+*Step (c): Oracle inequality.* The final step combines Steps (a) and (b) into an oracle inequality. Define the excess risk $\mathcal{E}(\hat{G}_n) = R(\hat{G}_n) - R^*$, where $R$ is the population integrated pinball loss. The standard empirical process bound gives
+$$
+\mathcal{E}(\hat{G}_n) \leq \underbrace{\inf_{G \in \mathcal{G}_n} R(G) - R^*}_{\text{approximation}} + \underbrace{C' \sqrt{\frac{S_n L_n \log(W_n n)}{n}}}_{\text{estimation}}.
+$$
+For a compositional target with intrinsic dimensions $(d_1, d_2)$ and a two-level network architecture, the approximation term from Step (a) gives $O(N^{-2\beta/\max(d_1, d_2)})$ where $N = S_n$ is the total parameter count. The estimation term from Step (b) gives $O(\sqrt{N \log N / n})$. Balancing these two contributions by choosing $N \asymp n^{\max(d_1,d_2)/(2\beta + \max(d_1,d_2))}$ yields the oracle rate
+$$
+\mathcal{E}(\hat{G}_n) = O\!\left(n^{-2\beta/(2\beta + \max(d_1, d_2))}\right).
+$$
+For the quantile transport map $Q(\tau, x) = g(\tau, f(x))$ with $d_1 = d$ (ambient) and $d_2 = k + 1$ (intrinsic plus $\tau$), the rate becomes $n^{-2\beta/(2\beta + k + 1)}$ whenever $k + 1 < d$, recovering Theorem A.6. The point is that the estimation rate is governed by the *bottleneck dimension* $\max(d_1, d_2)$, but since $f$ is deterministic (no stochastic component), the effective bottleneck is $d_2 = k + 1$, not $d_1 = d$. (This assumes the neural network architecture correctly identifies the intrinsic dimension $k$; estimating $f$ from data still incurs cost in the ambient dimension $d$ unless the architecture imposes the low-dimensional structure explicitly, as in @schmidt2020nonparametric Theorem 1.)
+
+The oracle inequality also reveals why naive application of neural networks without compositional structure gives no advantage over kernels. If the network is a single monolithic block approximating $Q$ on $[0,1]^{d+1}$, both the approximation and estimation terms scale with the full dimension $d+1$, and the resulting rate $n^{-2\beta/(2\beta+d+1)}$ matches the kernel rate (up to the extra +1 from the $\tau$ dimension). The advantage of depth is not automatic --- it requires the target to have compositional structure, and the architecture to mirror that structure through appropriate layer allocation.
+
+
+## Autoregressive Noise Outsourcing for Multivariate $\theta$ {#sec-proof-autoregressive}
+
+The noise outsourcing theorem (@sec-noise-outsourcing, Theorem 4.1) establishes that any univariate conditional distribution can be represented as a deterministic function of a single uniform random variable and the conditioning variable. In Bayesian inference, however, we frequently encounter multi-dimensional parameter vectors $\theta = (\theta_1, \ldots, \theta_d)$ with correlated posterior components. The question is whether the univariate machinery extends to this setting, and whether the resulting generator recovers the full joint posterior $\pi(\theta | y)$. The answer is affirmative, and the mechanism is the autoregressive decomposition introduced in @sec-noise-outsourcing (Theorem 4.3). Here we provide the formal proof that this decomposition is exact --- that it recovers the joint posterior without any approximation error from the decomposition itself.
+
+The proof strategy is conceptually simple but worth spelling out in full, because it reveals the precise role of each independent uniform draw and clarifies why the construction does not lose information about posterior correlations. The key tool is the chain rule of conditional distributions, which allows us to factor any joint density into a product of univariate conditionals. We then apply the univariate noise outsourcing theorem to each conditional in the factorization.
+
+::: {.callout-tip appearance="simple" title="Theorem A.8: Autoregressive Noise Outsourcing for the Joint Posterior"}
+Let $\pi(\theta | y)$ be the posterior distribution of $\theta = (\theta_1, \ldots, \theta_d) \in \mathbb{R}^d$ given data $y \in \mathcal{Y}$, and assume $\pi(\theta | y)$ admits a density with respect to Lebesgue measure on $\mathbb{R}^d$ for almost every $y$. Then there exist measurable functions $G_1^*, G_2^*, \ldots, G_d^*$ such that
+$$
+\begin{aligned}
+\theta_1 &= G_1^*(\tau_1, y), \\
+\theta_2 &= G_2^*(\tau_2, y, \theta_1), \\
+&\;\;\vdots \\
+\theta_d &= G_d^*(\tau_d, y, \theta_1, \ldots, \theta_{d-1}),
+\end{aligned}
+$$ {#eq-proof-autoregressive}
+where $\tau_1, \ldots, \tau_d \stackrel{\mathrm{iid}}{\sim} \mathrm{Uniform}(0,1)$ are jointly independent of $y$, and each $G_j^*$ is the conditional quantile function
+$$
+G_j^*(\tau, y, \theta_1, \ldots, \theta_{j-1}) = F_{\theta_j | \theta_1, \ldots, \theta_{j-1}, y}^{-1}(\tau).
+$$ {#eq-proof-cond-quantile}
+The resulting random vector $(\theta_1, \ldots, \theta_d)$ has distribution $\pi(\theta | y)$.
+:::
+
+*Proof.* We proceed by induction on $d$, using the chain rule of conditional distributions and the univariate noise outsourcing theorem at each step.
+
+*Base case ($d = 1$).* The marginal posterior $\pi(\theta_1 | y)$ is a univariate distribution. By the univariate noise outsourcing theorem (Theorem 4.1 in @sec-noise-outsourcing), there exists a measurable function $G_1^* : [0,1] \times \mathcal{Y} \to \mathbb{R}$ such that $\theta_1 = G_1^*(\tau_1, y)$ with $\tau_1 \sim \mathrm{Uniform}(0,1)$ independent of $y$, and $G_1^*(\cdot, y) = F_{\theta_1 | y}^{-1}(\cdot)$ is the quantile function of $\pi(\theta_1 | y)$.
+
+*Inductive step.* Suppose that the first $j-1$ components have been generated as $\theta_k = G_k^*(\tau_k, y, \theta_1, \ldots, \theta_{k-1})$ for $k = 1, \ldots, j-1$, using independent uniforms $\tau_1, \ldots, \tau_{j-1}$, and that the resulting $(\theta_1, \ldots, \theta_{j-1})$ has distribution $\pi(\theta_1, \ldots, \theta_{j-1} | y)$. We need to generate $\theta_j$ from the conditional $\pi(\theta_j | \theta_1, \ldots, \theta_{j-1}, y)$.
+
+Conditioned on $y$ and the realized values $\theta_1, \ldots, \theta_{j-1}$, the distribution $\pi(\theta_j | \theta_1, \ldots, \theta_{j-1}, y)$ is a univariate distribution on $\mathbb{R}$. By the univariate noise outsourcing theorem applied to this conditional distribution, there exists a measurable function $G_j^*$ such that
+$$
+\theta_j = G_j^*(\tau_j, y, \theta_1, \ldots, \theta_{j-1})
+$$
+with $\tau_j \sim \mathrm{Uniform}(0,1)$ independent of $(y, \theta_1, \ldots, \theta_{j-1})$. Since $\theta_1, \ldots, \theta_{j-1}$ are deterministic functions of $(\tau_1, \ldots, \tau_{j-1}, y)$, the independence of $\tau_j$ from $(y, \theta_1, \ldots, \theta_{j-1})$ is equivalent to the independence of $\tau_j$ from $(\tau_1, \ldots, \tau_{j-1}, y)$, which holds by construction since $\tau_1, \ldots, \tau_d$ are i.i.d.
+
+*Verifying the joint distribution.* By the chain rule of conditional distributions,
+$$
+\pi(\theta_1, \ldots, \theta_d | y) = \pi(\theta_1 | y) \cdot \pi(\theta_2 | \theta_1, y) \cdots \pi(\theta_d | \theta_1, \ldots, \theta_{d-1}, y).
+$$ {#eq-proof-chain}
+The construction generates $\theta_j$ from precisely the $j$-th factor $\pi(\theta_j | \theta_1, \ldots, \theta_{j-1}, y)$ in this product, using an independent uniform $\tau_j$. To verify that the joint distribution is correct, compute the probability of any event $A = A_1 \times \cdots \times A_d \subseteq \mathbb{R}^d$:
+$$
+\begin{aligned}
+P(\theta \in A | y) &= P(\theta_1 \in A_1 | y) \cdot P(\theta_2 \in A_2 | \theta_1, y) \cdots P(\theta_d \in A_d | \theta_1, \ldots, \theta_{d-1}, y) \\
+&= \int_{A_1} \pi(\theta_1 | y)\,d\theta_1 \cdot \int_{A_2} \pi(\theta_2 | \theta_1, y)\,d\theta_2 \cdots \int_{A_d} \pi(\theta_d | \theta_1, \ldots, \theta_{d-1}, y)\,d\theta_d \\
+&= \int_{A_1 \times \cdots \times A_d} \pi(\theta_1, \ldots, \theta_d | y)\,d\theta_1 \cdots d\theta_d,
+\end{aligned}
+$$
+which is precisely the probability assigned by the joint posterior $\pi(\theta | y)$. Since this holds for all product sets $A$ (which generate the Borel $\sigma$-algebra on $\mathbb{R}^d$), the distribution of $(\theta_1, \ldots, \theta_d)$ equals $\pi(\theta | y)$. $\square$
+
+Several aspects of this result deserve emphasis. First, the decomposition is *exact* --- no approximation is introduced by the autoregressive factorization. The only source of error in the GBC pipeline is the neural network approximation of each conditional quantile function $G_j^*$, and this error is controlled by the consistency results of Theorem A.4. Second, the ordering of the components $(\theta_1, \ldots, \theta_d)$ is arbitrary: any permutation gives a valid decomposition. However, some orderings lead to simpler conditional quantile functions than others, which affects the ease of learning. In practice, ordering components so that the most informative (most constrained by the data) component comes first tends to simplify the subsequent conditionals.
+
+Third, the proof reveals why independent uniform draws suffice to generate correlated posterior draws. The correlation between $\theta_1$ and $\theta_2$ is not encoded in any dependence between $\tau_1$ and $\tau_2$ (which are independent by construction), but rather in the *function* $G_2^*(\tau_2, y, \theta_1)$, which depends on the already-generated value $\theta_1$. A different value of $\theta_1$ leads to a different conditional distribution $\pi(\theta_2 | \theta_1, y)$, and hence to a different quantile function $G_2^*(\cdot, y, \theta_1)$. The dependence structure is captured entirely by the conditioning structure of the quantile functions, not by the noise inputs.
+
+Finally, combining Theorem A.9 with the CRPS convergence result (Theorem A.8) gives an end-to-end guarantee for multi-parameter posterior inference. If each conditional quantile function $G_j^*$ is learned by an IQN that achieves CRPS convergence at rate $O(n^{-2\beta/(2\beta + k_j + 1)})$, where $k_j$ is the effective conditioning dimension for the $j$-th conditional, then the total variation distance between the generated joint posterior and the true joint posterior converges to zero as the training data increase. The rate for the joint posterior is governed by the slowest-converging conditional, which is the one with the largest effective dimension $k_j$.
+
+
+## Barron's Spectral Bound {#sec-proof-barron}
+
+An alternative route to dimension-free approximation rates, due to @barron1993universal, avoids Holder smoothness entirely and instead assumes a spectral condition on the target function.
+
+::: {.callout-tip appearance="simple" title="Theorem A.9: Barron's Bound"}
+Let $f : \mathbb{R}^d \to \mathbb{R}$ have finite first moment of the Fourier magnitude distribution:
+$$
+C_f = \int_{\mathbb{R}^d} \|\omega\| \, |\hat{f}(\omega)|\, d\omega < \infty.
+$$
+Then for any $m \geq 1$, there exists a single-hidden-layer sigmoidal network with $m$ hidden units such that
+$$
+\int |f(x) - h_m(x)|^2 \, d\mu(x) \leq \frac{C_f^2}{m},
+$$
+where $\mu$ is any probability measure on $\mathbb{R}^d$. The rate $O(1/m)$ is independent of $d$.
+:::
+
+This result is striking: the approximation rate depends on the spectral complexity $C_f$, not the input dimension $d$. For quantile functions $Q^*(\tau, x)$ that are smooth in both $\tau$ and $x$, the Fourier condition is satisfied with $C_{Q^*}$ depending on the smoothness but not on $d$. This provides a complementary explanation for why neural networks avoid the curse of dimensionality --- not through compositional structure, but through spectral regularity.
+
+@polson2020deep discuss Barron's bound in the context of deep learning and show that depth amplifies this effect: deep networks can approximate compositions of Barron-class functions with rates that are multiplicative rather than additive in the component complexities.
+
+The compositional structure of deep networks has a classical antecedent in the Kolmogorov--Arnold superposition theorem (1957), which states that any continuous function $f : [0,1]^d \to \mathbb{R}$ can be written as
+$$
+f(x_1, \ldots, x_d) = \sum_{q=0}^{2d} \Phi_q\!\left(\sum_{p=1}^{d} \phi_{q,p}(x_p)\right),
+$$
+where $\phi_{q,p} : [0,1] \to \mathbb{R}$ and $\Phi_q : \mathbb{R} \to \mathbb{R}$ are continuous functions. This is a two-layer composition with univariate inner functions and a univariate outer function.
+
+@montanelli2020error use this representation to derive approximation bounds for deep ReLU networks. Their key result is that a ReLU network of depth $O(\log(1/\varepsilon))$ can approximate any function in the Kolmogorov--Arnold representation to within $\varepsilon$, with the number of parameters scaling polynomially in $1/\varepsilon$ and independently of $d$ (up to the $2d+1$ outer sums). This provides yet another route --- beyond Holder smoothness and Barron's spectral condition --- through which deep networks escape the curse of dimensionality.
+
+For the quantile transport map $Q^*(\tau, x)$, the Kolmogorov--Arnold representation applies with $p = d + 1$ (treating $\tau$ as one of the inputs). The inner functions $\phi_{q,p}$ can be interpreted as learned feature extractors that reduce each input coordinate to a one-dimensional summary, while the outer functions $\Phi_q$ combine these summaries into the quantile prediction. This resonates with the IQN architecture, where the cosine embedding acts as the $\tau$-branch feature extractor and the elementwise product combines the $\tau$ and $x$ features before the outer layers.
+
+When the quantile network is embedded in a Bayesian framework with a sparsity-inducing prior on the weights, @polson2018posterior establish posterior concentration rates. Specifically, if the prior assigns exponentially small probability to networks with more than $s$ active parameters and the true function lies in a $\beta$-Holder ball, the posterior concentrates at the minimax rate $n^{-2\beta/(2\beta+d)}$ (or the compositional rate when structure is present). This provides a Bayesian justification for the frequentist minimax rates above and connects the GBC framework to the broader program of Bayesian nonparametrics.
+
+
+## Summary of the Theoretical Chain {#sec-proof-summary}
+
+The results in this appendix fit together as a logical chain that supports the GBC framework end to end. We summarize the chain here.
+
+*Existence.* The noise outsourcing theorem (Theorem 4.1 in @sec-noise-outsourcing) guarantees that for any joint distribution $(X, Y)$, there exists a measurable function $Q^*(\tau, x) = F_{Y|X}^{-1}(\tau \mid x)$ such that $Y = Q^*(U, X)$ with $U \sim \mathrm{Uniform}(0,1)$ independent of $X$. The function $Q^*$ is the conditional quantile function and encodes the full conditional distribution.
+
+*Representability.* Theorems A.1--A.2 and Proposition A.1 guarantee that $Q^*$ can be approximated to arbitrary accuracy by a neural network --- including the specific IQN architecture with cosine embedding. The approximation error vanishes as the network grows.
+
+*Training objective.* Theorem A.3 shows that the pinball loss controls the CRPS: if the quantile approximation is $\varepsilon$-accurate, the CRPS error is at most $2\varepsilon$. The integrated pinball loss over uniform $\tau$ is equivalent to the Wasserstein-1 distance between the learned and true conditional distributions (Corollary A.1). Minimizing the pinball loss is therefore equivalent to minimizing a distributional distance.
+
+*Consistency.* Theorem A.4 establishes that the empirical risk minimizer $\hat{G}_n$ converges to $Q^*$ as the sample size $n \to \infty$, provided the network class grows at an appropriate rate. The CRPS of the learned model converges to the CRPS of the true conditional distribution.
+
+*CRPS convergence.* Theorem A.8 strengthens the consistency result by showing that the CRPS convergence holds uniformly over quantile levels, not just on average. The CRPS gap between the IQN and the oracle vanishes at the rate $O(n^{-2\beta/(2\beta+d+1)})$, ensuring that the full predictive distribution improves as training data grow.
+
+*Optimal rates.* Theorem A.5 gives the minimax rate $n^{-2\beta/(2\beta+d)}$ for $\beta$-Holder smooth quantile functions, which ReLU networks achieve. Theorem A.6 shows that when the quantile function has compositional structure with intrinsic dimension $k \ll d$, the rate improves to $n^{-2\beta/(2\beta+k+1)}$, escaping the curse of dimensionality. The proof sketches in @sec-proof-minimax-deep detail the three-step argument --- approximation of compositions, covering number bounds, and oracle inequality --- that establishes these rates. Barron's bound (Theorem A.7) provides a complementary dimension-free rate under spectral regularity.
+
+*Multivariate parameters.* Theorem A.9 proves that the autoregressive noise outsourcing decomposition recovers the exact joint posterior $\pi(\theta | y)$ for $d$-dimensional parameter vectors, using $d$ independent uniform draws and $d$ conditional quantile functions. The proof applies the univariate noise outsourcing theorem iteratively via the chain rule of conditional distributions, and the resulting generator captures all posterior correlations through the conditioning structure of the quantile functions.
+
+*Practical implication.* Taken together, these results justify the GBC pipeline: train an IQN on i.i.d. data by minimizing the pinball loss, and the resulting model provably converges to the true conditional quantile function at an optimal rate that depends on the intrinsic complexity of the problem, not the ambient dimension. For multi-parameter posteriors, the autoregressive extension guarantees exact joint distribution recovery, with each conditional quantile function enjoying its own consistency and rate guarantees.
+
+**Bibliographic notes.** The universal approximation theorem was established independently by @hornik1989multilayer and Cybenko (1989). Deep ReLU approximation rates were developed by @schmidt-hieber2020nonparametric, with extensions to compositional functions by @montanelli2020error. The Barron spectral bound appears in @barron1993universal; @polson2020deep provide a modern treatment in the deep learning context. Quantile regression was introduced by @koenker1978regression; minimax rates for quantile regression with neural networks are due to @padilla2022quantile. The CRPS--pinball equivalence is established in @gneiting2007strictly. Covering number bounds for deep networks are developed by @bartlett2019nearly. Posterior concentration for deep networks with sparsity priors is treated by @polson2018posterior. The non-crossing rearrangement for quantile estimators is due to @chernozhukov2010quantile. @white1992nonparametric provides early results on nonparametric quantile estimation with neural networks. The autoregressive decomposition for multivariate generative models is standard in the deep learning literature; our formulation follows the noise outsourcing framework of @kallenberg1997foundations.

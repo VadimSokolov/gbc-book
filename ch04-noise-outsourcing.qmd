@@ -1,0 +1,704 @@
+# The Noise Outsourcing Theorem {#sec-noise-outsourcing}
+
+The central question of this book is: how do we learn a conditional distribution $F_{Y|X}(\cdot | x)$ from data? In this chapter, we show that this question has a remarkably clean answer. The *noise outsourcing theorem* tells us that any conditional distribution can be represented as a deterministic function of a single uniform random variable. This function is nothing other than the conditional quantile function --- the inverse CDF evaluated conditionally.
+
+This result is the theoretical foundation for everything that follows. It says that learning the conditional quantile function $G^*(\tau, x) = F_{Y|X}^{-1}(\tau | x)$ is *equivalent* to learning the full conditional distribution. Not an approximation, not a summary --- the entire distribution, encoded in a single function. The rest of this book is about how to learn that function using neural networks.
+
+Before we state the theorem formally, let us pause to appreciate why we need it at all. Classical statistics gives us tools for estimating conditional means (regression), conditional variances (heteroscedastic models), and even conditional densities (kernel density estimation, normalizing flows). But these all come with trade-offs: conditional means lose distributional information, conditional densities require choosing a bandwidth or specifying a parametric form, and normalizing flows demand invertible architectures. The noise outsourcing theorem cuts through all of this by telling us that a single deterministic function --- the quantile function --- does the whole job. We do not need to estimate densities, we do not need invertible maps, and we do not lose any information. This is the conceptual anchor for Generative Bayesian Computation.
+
+The chapter is organized as follows.
+We begin with the formal statement and proof sketch of the noise outsourcing theorem in @sec-no-theorem, including the case of discrete and mixed distributions.
+We then develop the transport map interpretation in @sec-no-transport, showing how the quantile function is the optimal map from uniform noise to the target distribution.
+The multivariate extension in @sec-no-multivariate introduces the autoregressive decomposition that is essential for multi-parameter inference.
+We connect the result to Kolmogorov's representation theorem in @sec-no-kolmogorov-rep and to the notion of sufficient statistics in @sec-no-kolmogorov.
+The Bayesian corollary in @sec-no-gbc-corollary provides the specific form needed for posterior inference.
+We establish the universality of the approach in @sec-no-universality, including a worked example with the zero-inflated Poisson.
+A comparison with VAEs appears in @sec-no-vae, and the connection to optimal transport and the CRPS loss is developed in @sec-no-ot.
+We close with exercises in @sec-no-exercises.
+
+
+## Statement and Proof Sketch {#sec-no-theorem}
+
+We begin with the precise statement of the theorem, due to @kallenberg1997foundations. The result is sometimes called the "transfer theorem" or the "quantile coupling" in the probability literature, but the name "noise outsourcing" --- coined in the machine learning context --- captures its essence perfectly. The theorem appears as Theorem 6.10 in Kallenberg's *Foundations of Modern Probability*, where it is stated in the language of conditional distributions and regular conditional probabilities. We present a slightly specialized version that brings out the quantile function interpretation most clearly.
+
+::: {.callout-tip appearance="simple" title="Theorem 4.1: Noise Outsourcing"}
+Let $(X, Y)$ be random variables taking values in a Borel space $(\mathcal{X} \times \mathcal{Y})$. Then there exists a random variable $U \sim \mathrm{Uniform}(0, 1)$, independent of $X$, and a measurable function $G^* : [0, 1] \times \mathcal{X} \to \mathcal{Y}$ such that
+$$
+(X, Y) \stackrel{a.s.}{=} (X, \; G^*(U, X)).
+$$ {#eq-no-main}
+Moreover, the function $G^*$ can be taken to be the conditional quantile function:
+$$
+G^*(\tau, x) = F_{Y|X}^{-1}(\tau \mid x) = \inf\{y : F_{Y|X}(y \mid x) \geq \tau\}.
+$$ {#eq-no-quantile}
+:::
+
+Let us unpack what this theorem says. We start with a pair of random variables $(X, Y)$ that have some joint distribution. The conditional distribution of $Y$ given $X = x$ can be arbitrarily complex --- it could be multimodal, skewed, heavy-tailed, or even discrete. The theorem says that no matter how complicated this conditional distribution is, we can always "outsource" all the randomness in $Y$ (that is not already explained by $X$) to a single uniform random variable $U$.
+
+The word "outsourcing" is apt. Once we know $X = x$ and have drawn $U = \tau$, the value of $Y$ is determined: $Y = G^*(\tau, x)$. There is no remaining randomness. All the stochasticity in the relationship between $X$ and $Y$ has been outsourced to the uniform draw $U$.
+
+What makes this theorem so powerful for computation is that it replaces the problem of *sampling from a distribution* with the problem of *evaluating a function*. Sampling from a complicated distribution is hard: it requires MCMC, rejection sampling, or some other iterative procedure. Evaluating a function is easy: once we know $G^*$, we just plug in numbers. The entire difficulty has been shifted from the sampling step to the learning step --- from generating samples to learning the function $G^*$.
+
+We now sketch the proof, which is constructive: it tells us not only that $G^*$ exists, but exactly what it is. The argument relies on the probability integral transform, applied conditionally. We proceed in three steps.
+
+*Step 1.* For a fixed value $X = x$, consider the conditional CDF $F_{Y|X}(\cdot | x)$. If this CDF is continuous and strictly increasing, then the random variable
+$$
+V = F_{Y|X}(Y \mid x)
+$$
+is uniformly distributed on $(0, 1)$, by the probability integral transform. Moreover, $V$ is independent of $X$ (since we have "integrated out" the dependence through the conditional CDF). (We outline the key idea; see @kallenberg1997foundations for the complete measure-theoretic argument, which requires working with the joint distribution of $(X, Y)$ via the Kallenberg measurable selection theorem to establish that the uniformity of $V$ holds jointly, not merely conditionally for each fixed $x$.)
+
+*Step 2.* Inverting, we recover $Y$ from $V$ via:
+$$
+Y = F_{Y|X}^{-1}(V \mid x) = G^*(V, x).
+$$
+Setting $U = V$ gives us the desired representation.
+
+*Step 3.* When the conditional CDF has flat regions (e.g., for discrete or mixed distributions), the probability integral transform does not yield a uniform directly. We handle this by using the *generalized inverse* (the quantile function) and a randomization on the flat parts. For a discrete random variable $Y|X = x$ with atoms at $y_1 < y_2 < \cdots < y_K$ having probabilities $p_1, p_2, \ldots, p_K$, the CDF is a step function that jumps at each atom. Applying $F_{Y|X}(Y|x)$ to such a variable produces a random variable that takes the values $p_1, p_1 + p_2, \ldots, 1$ with probabilities $p_1, p_2, \ldots, p_K$ --- this is manifestly not uniform. The fix is to "spread" each atom over an interval: we define $V = F_{Y|X}(Y^- | x) + W \cdot P(Y = Y | X = x)$, where $W \sim \mathrm{Uniform}(0,1)$ is an independent auxiliary random variable and $F_{Y|X}(Y^-|x)$ denotes the left limit of the CDF. Each point mass $p_k$ at atom $y_k$ is now uniformly distributed over the interval $(F_{Y|X}(y_k^-|x), \, F_{Y|X}(y_k|x)]$, which has length exactly $p_k$. The union of these disjoint intervals covers $(0,1)$, so $V$ is indeed uniform. Inverting through the generalized quantile function $G^*(\tau, x) = \inf\{y : F_{Y|X}(y|x) \geq \tau\}$ then recovers the original discrete distribution. The details require measure-theoretic care, but the conclusion is the same: we can always find a uniform $U$, independent of $X$, such that $Y = G^*(U, X)$ almost surely. The full proof can be found in @kallenberg1997foundations [Theorem 6.10]. $\square$
+
+The beauty of this result is that it reduces the problem of learning an arbitrary conditional distribution to a problem of learning a single deterministic function $G^*$. This is a regression problem --- we are learning a function from $(U, X)$ to $Y$ --- and neural networks are excellent at regression. The conceptual shift is profound: instead of viewing distributional estimation as a *density estimation* problem (which requires specifying a parametric form or choosing a bandwidth), we view it as a *function approximation* problem (which requires choosing a network architecture and training procedure). Function approximation is arguably the task that deep learning does best, and the noise outsourcing theorem tells us that this is all we need.
+
+There is another way to appreciate the theorem's power. In classical statistics, estimating a conditional distribution typically requires making distributional assumptions --- Gaussian errors, exponential family structure, or at least some smoothness conditions on the density. The noise outsourcing theorem makes no such assumptions. The conditional distribution can be anything: multimodal, heavy-tailed, discrete, or mixed. The only requirement is that $(X, Y)$ are jointly defined on a Borel space, which is satisfied by essentially every probability model encountered in practice. This generality is inherited by the GBC algorithm: once we have the theorem in hand, the same neural network architecture and training procedure can be applied to Gaussian models, count data models, mixture models, and implicit simulators with equal ease.
+
+To make the theorem concrete, consider the heteroscedastic normal model:
+$$
+Y \mid X = x \sim \mathcal{N}\!\left(\mu(x),\; \sigma^2(x)\right).
+$$
+The conditional CDF is $F_{Y|X}(y | x) = \Phi\!\left(\frac{y - \mu(x)}{\sigma(x)}\right)$, where $\Phi$ is the standard normal CDF. Inverting:
+$$
+G^*(\tau, x) = \mu(x) + \sigma(x) \cdot \Phi^{-1}(\tau).
+$$ {#eq-no-normal}
+For each fixed $x$, as $\tau$ ranges over $(0, 1)$, we trace out the full Gaussian distribution centered at $\mu(x)$ with spread $\sigma(x)$. The median ($\tau = 0.5$) gives $\mu(x)$; the 2.5th and 97.5th percentiles ($\tau = 0.025$ and $0.975$) give the 95\% credible interval.
+
+Let us verify this numerically. We generate data from a model where both the mean and variance depend on $x$, construct $G^*$ analytically, and check that sampling $\tau \sim \mathrm{Uniform}(0,1)$ and evaluating $G^*(\tau, x)$ reproduces the conditional distribution.
+
+```{python}
+#| eval: true
+#| label: fig-no-normal-demo
+#| fig-cap: "Noise outsourcing for a heteroscedastic normal. Left: data points with conditional quantile curves. Right: histogram of generated samples at $x = 0.5$ vs true density."
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy import stats
+
+np.random.seed(42)
+
+# Heteroscedastic normal: Y | X ~ N(sin(pi*x), (0.3 + 0.5*x^2))
+def mu(x):
+    return np.sin(np.pi * x)
+
+def sigma(x):
+    return np.sqrt(0.3 + 0.5 * x**2)
+
+def G_star(tau, x):
+    """The noise outsourcing map: conditional quantile function."""
+    return mu(x) + sigma(x) * stats.norm.ppf(tau)
+
+# Generate training data
+n = 500
+X = np.random.uniform(-1, 1, n)
+Y = mu(X) + sigma(X) * np.random.randn(n)
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+
+# Left: data + quantile curves
+ax1.scatter(X, Y, alpha=0.15, s=8, color='gray', label='Data')
+x_grid = np.linspace(-1, 1, 200)
+for tau in [0.1, 0.25, 0.5, 0.75, 0.9]:
+    ax1.plot(x_grid, G_star(tau, x_grid), lw=1.5,
+             label=f'$\\tau = {tau}$')
+ax1.set_xlabel('$x$')
+ax1.set_ylabel('$G^*(\\tau, x)$')
+ax1.set_title('Conditional quantile curves')
+ax1.legend(fontsize=8, loc='upper left')
+
+# Right: verify at x = 0.5
+x0 = 0.5
+taus = np.random.uniform(0, 1, 10000)
+samples = G_star(taus, x0)
+y_grid = np.linspace(mu(x0) - 3*sigma(x0), mu(x0) + 3*sigma(x0), 200)
+ax2.hist(samples, bins=60, density=True, alpha=0.5, color='steelblue',
+         label='$G^*(U, 0.5)$, $U \\sim$ Unif')
+ax2.plot(y_grid, stats.norm.pdf(y_grid, mu(x0), sigma(x0)),
+         'k-', lw=2, label='True $N(\\mu(0.5), \\sigma^2(0.5))$')
+ax2.set_xlabel('$y$')
+ax2.set_ylabel('Density')
+ax2.set_title(f'Distribution at $x = {x0}$')
+ax2.legend(fontsize=8)
+
+plt.tight_layout()
+plt.show()
+```
+
+The left panel of @fig-no-normal-demo shows the conditional quantile curves $G^*(\tau, x)$ overlaid on the data. Each curve corresponds to a fixed quantile level $\tau$. The median curve ($\tau = 0.5$) traces the conditional mean $\mu(x) = \sin(\pi x)$, while the outer curves fan out to reflect the increasing variance $\sigma^2(x) = 0.3 + 0.5x^2$. Notice that the spacing between the $\tau = 0.25$ and $\tau = 0.75$ curves (the interquartile range) grows as $|x|$ increases, visually encoding the heteroscedasticity. The right panel confirms that sampling $U \sim \mathrm{Uniform}(0,1)$ and evaluating $G^*(U, 0.5)$ produces draws that match the true conditional density exactly.
+
+This example is deliberately simple: we know the closed-form quantile function because the conditional distribution is Gaussian. In practice, of course, we will not know $G^*$ analytically --- we will learn it from data using a neural network. But the example serves two purposes. First, it makes the noise outsourcing theorem tangible: the abstract representation $Y = G^*(U, X)$ becomes a concrete computation with a picture we can look at. Second, it establishes a ground truth against which we can test the neural network approximation in @sec-iqn: if the IQN learns the correct quantile function for a problem where we know the answer, we can trust it on problems where we do not.
+
+
+## $Y = G^*(U, X)$: Conditional Quantile as Transport Map {#sec-no-transport}
+
+The noise outsourcing theorem gives us a function $G^* : [0,1] \times \mathcal{X} \to \mathcal{Y}$ with a dual interpretation that is essential for understanding the GBC approach. We can view $G^*$ from two complementary perspectives, depending on which argument we hold fixed.
+
+Fixing $x$ and varying $\tau$, the map $\tau \mapsto G^*(\tau, x)$ is a *quantile function*---a monotone increasing function that maps the uniform distribution on $(0,1)$ to the conditional distribution $F_{Y|X}(\cdot | x)$. This is the view we use for *sampling*: given a specific input $x$, we draw $\tau \sim \mathrm{Uniform}(0,1)$ and evaluate $G^*(\tau, x)$ to get a sample from the conditional distribution.
+
+Fixing $\tau$ and varying $x$, the map $x \mapsto G^*(\tau, x)$ is a *quantile surface* (or quantile regression function) that tells us, for every input $x$, what value of $y$ sits at the $\tau$-th quantile of the conditional distribution. This is the view we use for *visualization*: plotting $G^*(\tau, \cdot)$ for several values of $\tau$ gives us a family of curves that show how the distribution shifts and changes shape across the input space. The collection of all such surfaces $\{G^*(\tau, \cdot) : \tau \in (0,1)\}$ encodes the entire conditional distribution.
+
+These two perspectives are complementary and both are essential in practice. The sampling view is what we use during inference: given new data, we generate posterior samples by drawing uniform $\tau$ values and evaluating the network. The surface view is what we use for visualization and communication: we plot quantile curves to show how uncertainty varies across the input space. The IQN architecture in @sec-iqn is designed to handle both views simultaneously, since it takes both $\tau$ and $x$ as inputs.
+
+This dual view is illustrated in the following schematic:
+
+$$
+\underbrace{G^*(\tau, x)}_{\text{quantile function}} = \underbrace{F_{Y|X}^{-1}(\tau \mid x)}_{\text{inverse CDF}}
+$$
+$$
+\begin{array}{ccc}
+\text{Fix } x: & \tau \mapsto G^*(\tau, x) & \text{(monotone increasing, quantile function)} \\
+\text{Fix } \tau: & x \mapsto G^*(\tau, x) & \text{(quantile surface)}
+\end{array}
+$$
+
+We can now make the connection to optimal transport explicit. This perspective gives geometric depth to the noise outsourcing theorem and will motivate the choice of loss function in @sec-iqn.
+
+For each fixed $x$, the noise outsourcing map defines a particular way of reshaping $\mathrm{Uniform}(0,1)$ into $F_{Y|X}(\cdot|x)$. But is it the *best* such reshaping? In the language of optimal transport, for each fixed $x$, the map $T_x : \tau \mapsto G^*(\tau, x)$ is the *Monge map* that pushes the uniform measure on $(0,1)$ forward to the conditional measure $F_{Y|X}(\cdot | x)$. That is,
+$$
+T_x{}_{\#} \mathrm{Uniform}(0,1) = F_{Y|X}(\cdot | x),
+$$
+where ${}_{\#}$ denotes the push-forward operation: if $U \sim \mathrm{Uniform}(0,1)$, then $T_x(U) = G^*(U, x) \sim F_{Y|X}(\cdot | x)$.
+
+Why is the *monotone* map special among all maps that push the uniform distribution to the target? There are infinitely many measurable functions $T$ such that $T(U)$ has the right distribution when $U$ is uniform. For instance, if $T$ is one such map, then $T \circ \sigma$ is another for any measure-preserving permutation $\sigma$ of $[0,1]$. Among all these maps, the monotone increasing one --- the quantile function --- is singled out by Brenier's theorem as the unique map that minimizes the quadratic transport cost.
+
+Geometrically, the monotone map "does not cross itself": it sends the smallest values of $\tau$ to the smallest values of $Y$, the largest to the largest, and so on. Any non-monotone map would introduce unnecessary "crossing" of mass, increasing the transport cost. Consider a simple example: suppose we want to map $\mathrm{Uniform}(0,1)$ to a distribution on $\{1, 2\}$ with equal probability. The monotone map sends $[0, 0.5]$ to $1$ and $(0.5, 1]$ to $2$. A non-monotone alternative might send $[0, 0.25] \cup [0.5, 0.75]$ to $1$ and the rest to $2$ --- this produces the right distribution, but it "wastes" transport by shuffling mass around unnecessarily. The monotone map is optimal precisely because it transports mass along the real line without any wasted movement.
+
+Moreover, this transport map is *optimal* in a precise sense. Among all maps that push $\mathrm{Uniform}(0,1)$ to $F_{Y|X}(\cdot | x)$, the monotone increasing one (i.e., the quantile function) minimizes the quadratic transport cost:
+$$
+T_x = \arg\min_{T : T_{\#}\mathrm{Unif} = F_{Y|X}(\cdot|x)} \int_0^1 |T(u) - u|^2 \, du.
+$$
+*Note on notation.* The cost integrand $|T(u) - u|^2$ measures the displacement of each quantile level $u$ under the map $T$: since the source measure is $\mathrm{Uniform}(0,1)$, the identity map $u \mapsto u$ is the "do nothing" baseline, and $T$ pushes $u$ to $T(u) \in F_{Y|X}(\cdot|x)$. This should not be read as comparing two abstract indices $\tau$ to itself; the variable $u$ ranges over $[0,1]$ as the source and $T(u)$ is a value in the support of $F_{Y|X}(\cdot|x)$.
+
+This is a one-dimensional instance of Brenier's theorem, which states that the optimal transport map (with quadratic cost) between two probability measures on $\mathbb{R}$ is the composition of their quantile functions. The one-dimensional case is special because the optimal map always exists, is unique, and has the explicit form $T^* = G^{-1} \circ F$ --- no optimization required, just compose quantile functions. In higher dimensions, finding the optimal transport map becomes a genuine optimization problem (the Monge--Amp\`ere equation), but in one dimension, the quantile function hands it to us for free.
+
+To build further intuition, let us visualize the quantile surface for a bimodal example. Consider a mixture distribution where the conditional density of $Y | X = x$ transitions from unimodal to bimodal:
+
+```{python}
+#| eval: true
+#| label: fig-no-quantile-surface
+#| fig-cap: "Quantile surfaces for a bimodal conditional distribution. Left: conditional densities at three values of $x$. Right: quantile curves showing how the distribution shape is encoded."
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy import stats
+
+np.random.seed(123)
+
+def conditional_quantile_mixture(tau, x):
+    """Quantile function for Y|X ~ 0.5*N(-1-x, 0.3^2) + 0.5*N(1+x, 0.3^2)."""
+    # Numerical inversion of the mixture CDF
+    from scipy.optimize import brentq
+    def cdf(y):
+        return 0.5 * stats.norm.cdf(y, -1 - x, 0.3) + \
+               0.5 * stats.norm.cdf(y, 1 + x, 0.3)
+    try:
+        return brentq(lambda y: cdf(y) - tau, -5, 5)
+    except ValueError:
+        return np.nan
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+
+# Left: conditional densities
+y_grid = np.linspace(-4, 4, 300)
+for x_val, color in zip([-0.5, 0.0, 0.5], ['#1f77b4', '#ff7f0e', '#2ca02c']):
+    density = 0.5 * stats.norm.pdf(y_grid, -1 - x_val, 0.3) + \
+              0.5 * stats.norm.pdf(y_grid, 1 + x_val, 0.3)
+    ax1.plot(y_grid, density, lw=2, color=color, label=f'$x = {x_val}$')
+ax1.set_xlabel('$y$')
+ax1.set_ylabel('$f_{Y|X}(y | x)$')
+ax1.set_title('Conditional densities')
+ax1.legend()
+
+# Right: quantile curves
+tau_grid = np.linspace(0.01, 0.99, 200)
+for x_val, color in zip([-0.5, 0.0, 0.5], ['#1f77b4', '#ff7f0e', '#2ca02c']):
+    q_vals = [conditional_quantile_mixture(t, x_val) for t in tau_grid]
+    ax2.plot(tau_grid, q_vals, lw=2, color=color, label=f'$x = {x_val}$')
+ax2.set_xlabel('$\\tau$')
+ax2.set_ylabel('$G^*(\\tau, x)$')
+ax2.set_title('Quantile functions $G^*(\\cdot, x)$')
+ax2.legend()
+
+plt.tight_layout()
+plt.show()
+```
+
+In @fig-no-quantile-surface, the left panel shows the bimodal conditional density at three values of $x$. The right panel shows the corresponding quantile functions $G^*(\cdot, x)$. Notice how the quantile function encodes the bimodality: there is a steep "jump" in the middle of the curve, corresponding to the gap between the two modes. The flat regions of the quantile function correspond to the tails of each mode, while the steep region corresponds to low-density areas between the modes. When the target distribution is bimodal, small changes in $\tau$ near 0.5 produce large jumps in $Y$ --- the quantile function must traverse the "valley" between the two modes, where there is very little probability mass. This steep section acts as a signature of bimodality that a neural network can learn from data, even without being told that the distribution is a mixture. Conversely, the flat regions near $\tau = 0$ and $\tau = 1$ reflect the concentration of mass in each mode's tails. This is a key insight: *the shape of the quantile function directly reflects the shape of the distribution*.
+
+
+## Multivariate Noise Outsourcing {#sec-no-multivariate}
+
+So far we have treated $Y$ as a scalar. In many applications --- and especially in the Bayesian inference setting of @sec-bayesian-inference, where $\theta = (\theta_1, \ldots, \theta_d)$ is a $d$-dimensional parameter vector --- we need to generate multivariate outputs from uniform noise. The noise outsourcing theorem extends naturally to this setting through an autoregressive decomposition.
+
+At first glance, it might seem that we need a $d$-dimensional uniform random vector to generate a $d$-dimensional output, with some complicated coupling between the uniform components to capture the dependencies among the $Y_j$'s. How can independent uniform draws capture the correlation between, say, the mean and variance parameters in a normal model? The autoregressive trick avoids this problem entirely: we use $d$ *independent* uniform draws, and the dependencies are captured by the conditioning structure of the quantile functions. The correlation between $Y_1$ and $Y_2$ is encoded not in the relationship between $\tau_1$ and $\tau_2$ (which are independent), but in the *function* $G_2^*(\tau_2, x, y_1)$, which depends on the already-generated value $y_1$. This is both theoretically elegant and computationally practical, because independent uniform draws are trivial to generate.
+
+The key idea is the chain rule of probability. Any joint distribution over $d$ variables can be factored as a product of conditionals:
+$$
+p(y_1, y_2, \ldots, y_d \mid x) = p(y_1 \mid x) \cdot p(y_2 \mid y_1, x) \cdot p(y_3 \mid y_1, y_2, x) \cdots p(y_d \mid y_1, \ldots, y_{d-1}, x).
+$$ {#eq-no-chain}
+Each factor in this product is a univariate conditional distribution --- exactly the kind of distribution that noise outsourcing handles. We can apply Theorem 4.1 to each factor separately, generating the $j$-th component by passing a fresh uniform draw through the conditional quantile function of $Y_j$ given everything that came before. The result is a simple but powerful generalization.
+
+::: {.callout-tip appearance="simple" title="Theorem 4.2: Multivariate Noise Outsourcing"}
+Let $(X, Y)$ be random variables with $Y = (Y_1, \ldots, Y_d) \in \mathbb{R}^d$. Then there exist independent uniform random variables $U_1, \ldots, U_d \stackrel{\text{iid}}{\sim} \mathrm{Uniform}(0,1)$, jointly independent of $X$, and measurable functions $G_1^*, G_2^*, \ldots, G_d^*$ such that
+$$
+\begin{aligned}
+Y_1 &= G_1^*(\tau_1, X), \\
+Y_2 &= G_2^*(\tau_2, X, Y_1), \\
+Y_3 &= G_3^*(\tau_3, X, Y_1, Y_2), \\
+&\;\;\vdots \\
+Y_d &= G_d^*(\tau_d, X, Y_1, \ldots, Y_{d-1}),
+\end{aligned}
+$$ {#eq-no-autoregressive}
+where each $G_j^*$ is the conditional quantile function of $Y_j$ given $(X, Y_1, \ldots, Y_{j-1})$.
+:::
+
+The structure in @eq-no-autoregressive is *autoregressive*: each component $Y_j$ is generated by its own quantile function $G_j^*$, which takes a fresh uniform draw $\tau_j$ and conditions on the input $X$ together with all previously generated components $Y_1, \ldots, Y_{j-1}$. This is exactly the same structure used in autoregressive generative models in deep learning --- WaveNet, PixelCNN, and GPT-style transformers all generate sequences one element at a time, conditioning on everything produced so far. The difference here is that each step uses a *quantile function* rather than a softmax or a Gaussian decoder, which means we get exact distribution recovery component by component.
+
+The interpretation is natural. The first quantile function $G_1^*(\tau_1, x)$ captures the marginal distribution of $Y_1$ given $X = x$. The second quantile function $G_2^*(\tau_2, x, y_1)$ captures the conditional distribution of $Y_2$ given both $X = x$ and the already-generated $Y_1 = y_1$. Each subsequent function captures finer conditional structure, incorporating all the dependence among the components of $Y$. Together, the $d$ functions and $d$ independent uniform draws are sufficient to generate draws from the full $d$-dimensional conditional distribution $F_{Y|X}(\cdot | x)$.
+
+There is an important practical point: the ordering of the components matters for computational efficiency, though not for correctness. Any permutation of $(Y_1, \ldots, Y_d)$ gives a valid autoregressive decomposition, but some orderings lead to simpler conditional quantile functions than others. If $Y_1$ and $Y_2$ are nearly independent given $X$, then $G_2^*(\tau_2, x, y_1) \approx G_2^*(\tau_2, x)$ --- the dependence on $y_1$ is weak, and the network does not need to work hard to learn it. We revisit this issue in @sec-bayesian-inference, where we discuss practical strategies for ordering the components of a multi-parameter posterior.
+
+A useful way to think about the autoregressive decomposition is as a sequential "peeling" of the joint distribution. The first quantile function peels off the marginal of $Y_1$, leaving the conditional distribution of $(Y_2, \ldots, Y_d)$ given $Y_1$. The second peels off the conditional of $Y_2$ given $Y_1$, and so on. At each step, we reduce the dimensionality of the remaining problem by one, and each reduction is exact --- no approximation is introduced by the decomposition itself. The only approximation comes from using a neural network to learn each $G_j^*$, and this is controlled by the usual tools of network architecture and training.
+
+It is worth noting the distinction between the autoregressive quantile decomposition and the autoregressive models commonly used in deep learning (such as GPT or WaveNet). In those models, the conditional distribution at each step is typically parameterized as a categorical (for discrete tokens) or a Gaussian mixture (for continuous values), and the parameters are predicted by the network. In our approach, the conditional distribution at each step is represented directly by its quantile function, which is itself the network output. This means we do not need to choose a parametric form for the conditionals --- the quantile function can represent any shape, including multimodal, skewed, or heavy-tailed distributions. The quantile representation is strictly more flexible than a Gaussian parameterization, at no additional computational cost.
+
+In the Bayesian inference setting of @sec-bayesian-inference, this decomposition is essential for handling multi-parameter posteriors with correlated components, where a single uniform draw would not suffice to capture the joint structure.
+
+
+## Kolmogorov's Representation Theorem {#sec-no-kolmogorov-rep}
+
+The multivariate noise outsourcing result connects to a classical theorem in approximation theory that has deep implications for neural network expressiveness. In 1957, Andrei Kolmogorov resolved a version of Hilbert's 13th problem by proving that every continuous function of several variables can be represented as a superposition of continuous functions of one variable and addition. The original question, posed by David Hilbert in 1900, asked whether all solutions of 7th-degree polynomial equations could be expressed as compositions of functions of two variables. The question was about the *essential complexity* of multivariate functions: can we always reduce a problem in many variables to problems in fewer variables? The prevailing intuition was that sufficiently complex functions of many variables should be irreducibly multivariate --- that there should exist functions that cannot be decomposed into simpler pieces. Kolmogorov overturned this intuition completely, showing that even functions of a single variable suffice. His student Vladimir Arnold subsequently refined the result, and the theorem is now often called the Kolmogorov--Arnold representation theorem.
+
+::: {.callout-tip appearance="simple" title="Theorem 4.4: Kolmogorov's Superposition Theorem (1957)"}
+For any continuous function $f : [0,1]^d \to \mathbb{R}$, there exist continuous univariate functions $\phi_{ij} : [0,1] \to \mathbb{R}$ and $\Psi_j : \mathbb{R} \to \mathbb{R}$ such that
+$$
+f(x_1, \ldots, x_d) = \sum_{j=0}^{2d} \Psi_j\!\left(\sum_{i=1}^{d} \phi_{ij}(x_i)\right).
+$$
+:::
+
+Kolmogorov's theorem tells us that the multivariate complexity of a function is, in a precise sense, reducible to univariate complexity. No matter how many input variables there are, the function can be built from one-dimensional pieces glued together with addition. This result is sometimes cited as a mathematical justification for neural networks, since a two-layer network with $2d+1$ hidden units can in principle represent any continuous function --- though the inner functions $\phi_{ij}$ may be highly irregular and difficult to learn in practice.
+
+For GBC, the computational implication of Kolmogorov's theorem is direct and powerful. Consider the posterior quantile map $G(\tau, S(y))$ from Corollary 4.1. Even when the data $y = (y_1, \ldots, y_n)$ is high-dimensional and the relationship between data and parameters is highly nonlinear, Kolmogorov's theorem guarantees that the map can be decomposed into univariate pieces. In practice, we do not need to find Kolmogorov's exact (and potentially pathological) decomposition --- instead, we use a neural network as a smooth, learnable approximation.
+
+The theorem serves as an existence guarantee: no matter how complex the posterior is, a sufficiently expressive network can represent it. As noted in the source paper @polson2024generative, "the Kolmogorov--Arnold theorem says any multivariate function can be expressed this way, so in principle if sample size is large enough we can learn the manifold structure in the parameters for any arbitrary nonlinearity." The autoregressive decomposition in @eq-no-autoregressive provides a more structured way to exploit this idea, where each univariate piece has a clear probabilistic interpretation as a conditional quantile function.
+
+The connection between Kolmogorov's result and the autoregressive quantile decomposition also illuminates a subtle point about neural network architecture. Kolmogorov's inner functions $\phi_{ij}$ are universal but unstructured --- they have no monotonicity, no probabilistic meaning, and they can be fractal-like. Indeed, Kolmogorov's original construction produces inner functions that are nowhere differentiable, making the representation theoretically beautiful but practically useless for computation. The quantile functions $G_j^*$ in the autoregressive decomposition, by contrast, are monotone increasing in their $\tau$ argument, they map uniform inputs to meaningful outputs, and their shape has a direct distributional interpretation. This additional structure is precisely what the IQN architecture in @sec-iqn exploits: by embedding $\tau$ through a cosine basis and enforcing approximate monotonicity through training, the network learns quantile functions that are both accurate and interpretable.
+
+Recently, the machine learning community has revisited Kolmogorov's theorem under the name "Kolmogorov--Arnold Networks" (KANs), which replace the fixed activation functions in standard neural networks with learnable univariate functions on the edges. While KANs are a promising direction for general function approximation, for the specific task of conditional distribution estimation, the quantile-based approach has a clear advantage: the probabilistic structure of the quantile function provides built-in guarantees (monotonicity, distributional completeness) that a generic KAN does not.
+
+
+## Quantile Function as Sufficient Statistic {#sec-no-kolmogorov}
+
+The noise outsourcing theorem tells us that the conditional quantile function $G^*(\tau, x)$ encodes the full conditional distribution of $Y$ given $X = x$. This is a far stronger statement than knowing just the conditional mean $\mathbb{E}[Y | X = x]$ or the conditional variance $\mathrm{Var}(Y | X = x)$. It captures the entire distributional shape --- skewness, multimodality, tail behavior, and everything else.
+
+This observation connects to a deep result of @kolmogorov1942definition on sufficient statistics. The idea of sufficiency --- that a summary of the data can contain all the information relevant for inference --- is one of the oldest and most powerful ideas in statistics. Kolmogorov gave it a precise Bayesian formulation: a statistic is sufficient if and only if the posterior distribution depends on the data only through it. We state this result formally because it provides the theoretical justification for using summary statistics in the GBC framework.
+
+::: {.callout-tip appearance="simple" title="Theorem 4.3: Kolmogorov's Sufficient Statistic"}
+If $S^*$ is a sufficient statistic for the parameter $\theta$ in a model with data $Y$, then for almost every $y$,
+$$
+\pi(\theta \mid Y = y) = \pi(\theta \mid S^*(Y) = S^*(y)).
+$$
+The posterior distribution depends on the data only through $S^*$.
+:::
+
+Kolmogorov's result says that a sufficient statistic captures everything in the data that is relevant for inference about the parameter. In exponential family models, sufficient statistics are well known and finite-dimensional: the sample mean for the normal, the count for the Poisson, the order statistics for the uniform. The Fisher--Neyman factorization theorem provides a constructive way to find them. But outside exponential families, and especially for implicit models where no likelihood is available, the notion of sufficiency becomes murkier. A sufficient statistic may not exist in any useful finite-dimensional form, or it may be the entire dataset itself (which provides no reduction at all).
+
+The GBC framework provides a concrete computational handle on sufficiency, even in settings where classical sufficient statistics do not exist. The idea, developed in the ABC (Approximate Bayesian Computation) literature by @fearnhead2012constructing and others, is to *learn* a summary statistic from data. In the GBC approach, the posterior mean $\hat{S}(y) = \mathbb{E}[\theta | y]$ serves as an approximately sufficient summary, and a neural network learns to compute it.
+
+In the GBC framework, we apply this idea with a twist. Instead of thinking of $\theta$ as a fixed parameter, we think of the *target* --- the quantity whose conditional distribution we want to learn --- and the *features* $X$ as the conditioning variable. The conditional quantile function $G^*(\tau, x)$ is then the "sufficient statistic" in the following sense:
+
+::: {.callout-tip appearance="simple" title="Proposition 4.1: Quantile Function as Sufficient Statistic"}
+Knowledge of $G^*(\tau, x)$ for all $\tau \in (0,1)$ is equivalent to knowledge of the full conditional distribution $F_{Y|X}(\cdot | x)$. That is, the map $\tau \mapsto G^*(\tau, x)$ is a sufficient description of the conditional distribution.
+:::
+
+*Proof.* The quantile function and the CDF are inverses of each other (up to the technicalities of the generalized inverse). Given $G^*(\cdot, x)$, we recover the CDF via
+$$
+F_{Y|X}(y | x) = \sup\{\tau \in (0,1) : G^*(\tau, x) \leq y\}.
+$$
+From the CDF, we can compute any functional of the distribution: the mean $\mathbb{E}[Y|X=x] = \int_0^1 G^*(\tau, x) \, d\tau$, the variance, any moment, the mode, the entropy, or any expected utility. $\square$
+
+The proposition may seem almost tautological --- of course knowing the full quantile function is equivalent to knowing the full distribution. But the point is deeper than it appears. It tells us that *a single function of two arguments* --- $G^*(\tau, x)$ --- is a sufficient representation of the infinite-dimensional family of conditional distributions indexed by $x$. We do not need a separate object for each $x$; we need one function that takes $x$ as an input. This is why learning $G^*$ with a neural network is such a natural approach: the network parameterizes the entire family of conditional distributions simultaneously.
+
+It is instructive to compare what different "levels" of knowledge about the conditional distribution buy us:
+
+| What we know | What we can compute | What we miss |
+|---|---|---|
+| $\mathbb{E}[Y \mid X = x]$ | Point predictions, MSE-optimal forecasts | Uncertainty, intervals, tail risk |
+| $\mathbb{E}[Y \mid X = x]$ and $\mathrm{Var}(Y \mid X = x)$ | Prediction intervals (if Gaussian) | Skewness, multimodality, tail shape |
+| $G^*(\tau, x)$ for all $\tau$ | *Everything*: full distribution, any functional | Nothing --- this is sufficient |
+
+: Hierarchy of conditional summaries. {#tbl-no-hierarchy}
+
+The conditional quantile function sits at the top of this hierarchy. It is the minimal object that carries complete information about the conditional distribution. This is why the GBC approach --- learning $G^*$ via an implicit quantile network --- is fundamentally more informative than standard regression (which learns only the conditional mean) or heteroscedastic regression (which learns the mean and variance). The additional computational cost of learning the full quantile function, compared to learning just the mean, is modest: we simply add a $\tau$ input to the network and train with the pinball loss instead of squared error. The network size need not increase substantially --- the $\tau$ input is a single scalar, and the cosine embedding (described in @sec-iqn) adds a modest number of features. The reward is enormous: we go from a single point prediction to the entire conditional distribution, with all the uncertainty quantification, interval estimation, and decision-theoretic capabilities that it entails. As we shall see in @sec-meu, having access to the full quantile function also enables density-free expected utility calculations, which are central to Bayesian decision theory.
+
+
+## GBC Corollary: Noise Outsourcing for Bayesian Inference {#sec-no-gbc-corollary}
+
+*The Bayesian connection.* In the Bayesian setting, we replace $Y$ with the posterior parameter $\theta$ and $X$ with the observed data $y$. The noise outsourcing theorem then gives us:
+
+::: {.callout-tip appearance="simple" title="Corollary 4.1: Noise Outsourcing for Bayesian Inference"}
+If $(\theta, Y)$ are random variables in a Borel space, then there exists $U \sim \mathrm{Uniform}(0,1)$ independent of $Y$ and a measurable function $G : [0,1] \times \mathcal{Y} \to \Theta$ such that
+$$
+(\theta, Y) \stackrel{a.s.}{=} (G(U, Y), \; Y).
+$$ {#eq-no-bayes}
+Moreover, if $S(Y)$ is a sufficient statistic with $\theta \perp\!\!\!\perp Y \mid S(Y)$, then
+$$
+\theta \mid Y = y \stackrel{D}{=} G(U, S(y)), \quad U \sim \mathrm{Uniform}(0,1).
+$$ {#eq-no-bayes-suff}
+:::
+
+This corollary is the single most important result for the practical GBC algorithm, and it deserves careful attention. The theorem statement looks abstract, but its computational implications are concrete and far-reaching. Let us spell out exactly what it means, because this is where the rubber meets the road.
+
+The key insight is the *reversal of roles* compared to Theorem 4.1. In the original theorem, $X$ was the conditioning variable and $Y$ was the target. Here, the *data* $Y$ plays the role of the conditioning variable and the *parameter* $\theta$ plays the role of the target. This reversal is the heart of Bayesian inference: we observe $Y$ and want to learn about $\theta$. The corollary says that the posterior distribution of $\theta$ given $Y$ can be represented by a deterministic function of a uniform random variable and the data, exactly as in the general case.
+
+Equation @eq-no-bayes-suff says that we can generate posterior samples of $\theta$ by:
+
+1. Computing the sufficient statistic $S(y)$ from the observed data,
+2. Drawing $U \sim \mathrm{Uniform}(0,1)$,
+3. Evaluating $G(U, S(y))$.
+
+No MCMC, no likelihood evaluation, no convergence diagnostics. Once we have learned the map $G$, posterior sampling is a forward pass through a neural network --- a computation that is embarrassingly parallel on a GPU and takes microseconds per sample. The function $G$ here is the posterior quantile function $F_{\theta|Y}^{-1}(\tau \mid y)$, and learning it from simulated data is the core of the GBC algorithm (developed in detail in @sec-iqn).
+
+The computational implications go further, and they represent a fundamental shift in how we think about Bayesian computation. In traditional Bayesian computation, every new dataset $y_{\text{obs}}$ requires a fresh MCMC run --- potentially thousands or millions of likelihood evaluations, each of which may be expensive if the model involves solving differential equations, running simulations, or evaluating complex functions. The total cost scales as (number of MCMC iterations) $\times$ (cost per likelihood evaluation) $\times$ (number of datasets), and this can be prohibitive when inference must be performed repeatedly on many datasets.
+
+With GBC, the expensive step is *training*, which is done once using simulated $(\theta, y)$ pairs drawn from the joint prior-predictive distribution. The training cost is (number of SGD iterations) $\times$ (cost per batch), and it is paid only once. Once the network $\hat{G}$ is trained, inference for any new $y_{\text{obs}}$ reduces to evaluating $\hat{G}(\tau, S(y_{\text{obs}}))$ for a grid of $\tau$ values --- a computation that takes milliseconds on a GPU. This "amortization" of the inference cost is one of the principal advantages of the GBC framework, and it flows directly from Corollary 4.1. We develop this idea extensively in @sec-bayesian-inference.
+
+As noted in @kolmogorov1942definition, the posterior mean $\hat{S}(y) = \mathbb{E}_\pi[\theta \mid y]$ is itself a Bayes-optimal sufficient statistic. This motivates a two-stage procedure: first learn the posterior mean as a summary statistic, then use it as an input feature for the quantile network. Concretely, one trains a first network $\hat{S}_\psi(y) \approx \mathbb{E}[\theta | y]$ by minimizing the squared error loss on simulated $(\theta, y)$ pairs, and then uses $\hat{S}_\psi(y)$ as the input to the quantile network $\hat{G}_\phi(\tau, \hat{S}_\psi(y))$. This two-stage approach has the advantage of dimensionality reduction: instead of feeding the full high-dimensional $y$ into the quantile network, we feed the low-dimensional summary $\hat{S}_\psi(y)$. We discuss this architecture further in @sec-iqn.
+
+It is also worth noting that the Bayesian corollary extends naturally to the multi-parameter case via the autoregressive decomposition of @sec-no-multivariate. For a $d$-dimensional parameter $\theta = (\theta_1, \ldots, \theta_d)$, we have
+$$
+\theta_j \mid Y = y \stackrel{D}{=} G_j(U_j, S(y), \theta_1, \ldots, \theta_{j-1}), \quad U_j \sim \mathrm{Uniform}(0,1),
+$$
+where each $G_j$ is the conditional posterior quantile function of $\theta_j$ given the data summary and the previously sampled components. This sequential sampling scheme produces exact draws from the joint posterior $\pi(\theta_1, \ldots, \theta_d \mid y)$, provided that each $G_j$ is learned accurately. The approach is developed in full detail in @sec-bayesian-inference.
+
+
+## Universality of the Quantile Representation {#sec-no-universality}
+
+A natural question is: does the noise outsourcing theorem apply to *all* distributions? A skeptical reader might worry that the theorem only works for "nice" distributions --- continuous, unimodal, with well-behaved tails. After all, the proof sketch relied on the probability integral transform, which is most intuitive for continuous distributions. But the answer is yes --- the representation $Y = G^*(U, X)$ is universal. It works for continuous, discrete, and mixed distributions alike. The generalized inverse (the quantile function defined as an infimum) handles all cases uniformly, which is one of the great strengths of the quantile-based approach.
+
+This universality is not merely a theoretical nicety. In applied Bayesian inference, we frequently encounter posterior distributions that do not fit neatly into any standard parametric family. A posterior may be multimodal (reflecting model uncertainty), truncated (reflecting parameter constraints), or have point masses (reflecting model selection). A method that works only for continuous distributions, or only for distributions with smooth densities, would be severely limited. The quantile-based approach handles all of these cases within a single framework.
+
+Let us walk through the three cases and see how the shape of the quantile function reflects the nature of the distribution.
+
+*Continuous distributions.* When $F_{Y|X}(\cdot | x)$ is continuous and strictly increasing, the quantile function $G^*(\cdot, x)$ is also continuous and strictly increasing. This is the simplest case, and the one most commonly encountered in practice. The Gaussian gives $G^*(\tau, x) = \mu(x) + \sigma(x)\Phi^{-1}(\tau)$---a smooth, S-shaped curve in $\tau$ that is symmetric about $\tau = 0.5$. The exponential gives $G^*(\tau, x) = -\lambda(x)^{-1} \log(1 - \tau)$---convex and increasing, reflecting the right skew. As $\tau \to 1$, the exponential quantile function diverges to infinity, which encodes the heavy right tail. The Student-$t$ has heavier tails than the Gaussian, so $G^*$ grows faster near $\tau = 0$ and $\tau = 1$. Comparing the Gaussian and Student-$t$ quantile functions side by side, one immediately sees the difference in tail behavior: the Student-$t$ curves pull away from the Gaussian curves in the extreme quantiles, reflecting the greater probability of extreme values. In each case, the qualitative shape of the quantile function --- its curvature, its rate of growth in the tails, whether it is concave or convex --- encodes the distributional character in a way that is visually interpretable. A practitioner can "read" the distribution from the quantile function without computing a density.
+
+*Discrete distributions.* For discrete distributions, the quantile function $G^*(\cdot, x)$ is a *step function* in $\tau$. This is perhaps the most surprising application of the noise outsourcing theorem, because it shows that even distributions with no continuous component can be represented through a uniform random variable. If $Y | X = x$ takes values $y_1 < y_2 < \cdots < y_K$ with probabilities $p_1, p_2, \ldots, p_K$, then
+$$
+G^*(\tau, x) = y_k \quad \text{for } \tau \in \left(\sum_{j=1}^{k-1} p_j, \; \sum_{j=1}^{k} p_j\right].
+$$
+The function jumps at the cumulative probability boundaries. The height of each step equals the corresponding outcome value $y_k$, and the width of each step equals the probability $p_k$. The wider the step, the more probable that outcome. A Bernoulli random variable, for instance, has a quantile function that is zero for $\tau \in (0, 1-p]$ and one for $\tau \in (1-p, 1]$ --- the entire distribution is encoded in a single step whose location is determined by the probability parameter $p$. The Poisson distribution has an infinite staircase of steps, with step widths given by the Poisson probabilities $e^{-\lambda}\lambda^k/k!$. The steps become narrower as $k$ increases, reflecting the decreasing probability of large counts.
+
+*Mixed distributions.* Mixed distributions --- those with both continuous and discrete components --- also fit into this framework. The quantile function has flat regions (steps) at the atoms and continuous segments elsewhere. These mixed distributions arise frequently in practice: insurance claims (zero with some probability, continuous loss otherwise), rainfall (no rain or continuous amount), and demand models (no purchase or continuous quantity). A common example is a zero-inflated model:
+$$
+Y | X = x \sim \begin{cases} 0 & \text{with probability } p(x), \\ \mathrm{Exponential}(\lambda(x)) & \text{with probability } 1 - p(x). \end{cases}
+$$
+The quantile function is:
+$$
+G^*(\tau, x) = \begin{cases} 0 & \text{if } \tau \leq p(x), \\ -\lambda(x)^{-1} \log\!\left(\frac{1 - \tau}{1 - p(x)}\right) & \text{if } \tau > p(x). \end{cases}
+$$
+
+### Worked Example: Zero-Inflated Poisson {#sec-no-zip}
+
+To make the mixed-distribution case concrete, let us work through a zero-inflated Poisson (ZIP) model. The ZIP distribution is common in count data with excess zeros --- insurance claims, species counts, manufacturing defects. The model is:
+$$
+Y | X = x \sim \begin{cases} 0 & \text{with probability } \pi_0(x), \\ \mathrm{Poisson}(\lambda(x)) & \text{with probability } 1 - \pi_0(x), \end{cases}
+$$
+where $\pi_0(x)$ is the zero-inflation probability and $\lambda(x)$ is the Poisson rate, both depending on the covariate $x$. The marginal probability of observing $Y = 0$ is $\pi_0(x) + (1 - \pi_0(x)) e^{-\lambda(x)}$, which exceeds the Poisson probability $e^{-\lambda(x)}$ whenever $\pi_0(x) > 0$.
+
+The noise outsourcing construction for the ZIP works as follows. The uniform interval $(0, 1)$ is partitioned into segments, one for each possible value of $Y$. The segment for $Y = 0$ has width $\pi_0(x) + (1 - \pi_0(x))e^{-\lambda(x)}$, which is wider than the Poisson probability $e^{-\lambda(x)}$ by the zero-inflation amount $\pi_0(x)$. The remaining segments correspond to $Y = 1, 2, 3, \ldots$ with widths given by the Poisson probabilities $(1 - \pi_0(x)) \cdot e^{-\lambda(x)} \lambda(x)^k / k!$.
+
+The quantile function for the ZIP is a step function with a "wide" step at zero (reflecting the inflated zero probability) followed by the usual Poisson steps. Let us construct this explicitly and verify it with simulation.
+
+```{python}
+#| eval: true
+#| label: fig-no-zip
+#| fig-cap: "Noise outsourcing for a zero-inflated Poisson. Left: the quantile function $G^*(\\tau, x)$ showing the wide step at zero and subsequent Poisson steps. Right: histogram of $G^*(U, x)$ samples versus true ZIP probabilities."
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy import stats
+
+np.random.seed(314)
+
+# ZIP parameters at a fixed x
+pi0 = 0.3       # zero-inflation probability
+lam = 2.5       # Poisson rate
+
+# CDF of ZIP
+def zip_cdf(k, pi0, lam):
+    """CDF of zero-inflated Poisson at integer k."""
+    if k < 0:
+        return 0.0
+    return pi0 + (1 - pi0) * stats.poisson.cdf(k, lam)
+
+# Quantile function of ZIP (generalized inverse)
+def zip_quantile(tau, pi0, lam):
+    """Quantile function: smallest k such that CDF(k) >= tau."""
+    if tau <= 0:
+        return 0
+    k = 0
+    while zip_cdf(k, pi0, lam) < tau:
+        k += 1
+    return k
+
+# Build the quantile function over a grid
+tau_grid = np.linspace(0.001, 0.999, 2000)
+q_vals = np.array([zip_quantile(t, pi0, lam) for t in tau_grid])
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+
+# Left: quantile function
+ax1.plot(tau_grid, q_vals, 'steelblue', lw=1.5)
+ax1.axhline(y=0, color='gray', ls='--', lw=0.5)
+# Mark the zero-inflation boundary
+p_zero = pi0 + (1 - pi0) * np.exp(-lam)
+ax1.axvline(x=p_zero, color='tomato', ls=':', lw=1,
+            label=f'$P(Y=0) = {p_zero:.3f}$')
+ax1.set_xlabel('$\\tau$')
+ax1.set_ylabel('$G^*(\\tau)$')
+ax1.set_title('ZIP quantile function')
+ax1.legend(fontsize=8)
+
+# Right: histogram from noise outsourcing vs true PMF
+U = np.random.uniform(0, 1, 50000)
+samples = np.array([zip_quantile(u, pi0, lam) for u in U])
+
+k_vals = np.arange(0, 10)
+# True ZIP PMF
+true_pmf = np.zeros(len(k_vals))
+true_pmf[0] = pi0 + (1 - pi0) * stats.poisson.pmf(0, lam)
+for k in range(1, len(k_vals)):
+    true_pmf[k] = (1 - pi0) * stats.poisson.pmf(k, lam)
+
+ax2.bar(k_vals - 0.2, true_pmf, width=0.4, color='tomato',
+        alpha=0.7, label='True ZIP PMF')
+# Empirical from G*(U)
+empirical = np.array([np.mean(samples == k) for k in k_vals])
+ax2.bar(k_vals + 0.2, empirical, width=0.4, color='steelblue',
+        alpha=0.7, label='$G^*(U)$ samples')
+ax2.set_xlabel('$y$')
+ax2.set_ylabel('Probability')
+ax2.set_title(f'ZIP($\\pi_0={pi0}$, $\\lambda={lam}$)')
+ax2.legend(fontsize=8)
+
+plt.tight_layout()
+plt.show()
+```
+
+In @fig-no-zip, the left panel shows the quantile function for the ZIP model. The wide step at $Y = 0$ extends from $\tau = 0$ to $\tau \approx 0.357$, reflecting the inflated zero probability $P(Y = 0) = \pi_0 + (1 - \pi_0) e^{-\lambda} \approx 0.357$. The subsequent steps correspond to the Poisson part of the distribution. The right panel confirms that drawing $U \sim \text{Uniform}(0,1)$ and evaluating $G^*(U)$ reproduces the true ZIP probabilities exactly. This example illustrates how noise outsourcing handles the point mass at zero: the uniform interval $[0, P(Y=0)]$ is mapped entirely to the value zero, while the remaining interval $(P(Y=0), 1]$ is distributed among the positive integers according to the Poisson probabilities.
+
+There is a practical subtlety here that is worth flagging. When we train a neural network to approximate $G^*$ for a discrete or mixed distribution, the network output is continuous --- it cannot produce exact step functions. The network will learn a smooth approximation to the step function, with steep but finite gradients at the jump points. For many purposes, this smooth approximation is perfectly adequate: the generated samples will cluster tightly around the true discrete values, and rounding to the nearest integer recovers the exact distribution. However, for applications where the discreteness is essential (e.g., count data or classification), post-processing the network output may be necessary. We discuss this issue further in the context of calibration in @sec-calibration.
+
+The universality of the quantile representation has a direct computational consequence. Since *any* conditional distribution is encoded by the function $G^*(\tau, x)$, learning this function from data is a universal approach to conditional distribution estimation. We do not need different algorithms for different distribution families --- the same approach works whether the conditional distribution is Gaussian, Poisson, a mixture, or something for which we cannot even write down a density. This universality is what makes the GBC framework a genuine alternative to MCMC: it is not restricted to conjugate models, exponential families, or any other special structure.
+
+The final theoretical piece we need is the guarantee that neural networks can actually learn $G^*$. The universal approximation theorem for neural networks guarantees that, for any continuous target function on a compact domain, there exists a neural network that approximates it to arbitrary accuracy.
+
+::: {.callout-tip appearance="simple" title="Proposition 4.2: Neural Network Approximation of $G^*$"}
+Let $\mathcal{X} \subset \mathbb{R}^d$ be compact and let $G^*(\tau, x)$ be a continuous conditional quantile function on $[0,1] \times \mathcal{X}$. For any $\epsilon > 0$, there exists a ReLU network $G_\phi : [0,1] \times \mathcal{X} \to \mathbb{R}$ with finitely many parameters $\phi$ such that
+$$
+\sup_{\tau \in [0,1], \, x \in \mathcal{X}} |G_\phi(\tau, x) - G^*(\tau, x)| < \epsilon.
+$$
+:::
+
+This proposition is the bridge between theory and practice. The noise outsourcing theorem guarantees that $G^*$ exists; the universal approximation theorem guarantees that a neural network can learn it. Together, these two results tell us that the GBC approach is *theoretically complete*: for any conditional distribution we might encounter, there exists a neural network that can represent the corresponding quantile function to arbitrary accuracy.
+
+Of course, existence of an approximation is not the same as being able to find it efficiently. The gap between these two guarantees --- finding the right architecture and training procedure that converges to a good approximation of $G^*$ within a reasonable computational budget --- is the subject of the next chapter. The Implicit Quantile Network (IQN), which we develop in @sec-iqn, is a specific architecture designed to exploit the structure of $G^*$ --- in particular, its monotonicity in $\tau$ and its dependence on the cosine embedding of the quantile level. The cosine embedding, borrowed from distributional reinforcement learning (@sec-dist-rl), provides a frequency-based representation of the quantile level that allows the network to learn both smooth and sharp features of the quantile function. The idea is to represent $\tau$ as a vector $[\cos(\pi \cdot 1 \cdot \tau), \cos(\pi \cdot 2 \cdot \tau), \ldots, \cos(\pi \cdot K \cdot \tau)]$, which gives the network access to multiple frequency components of the $\tau$ input. This is analogous to positional encodings in transformers and Fourier features in implicit neural representations. The monotonicity constraint, while not enforced exactly, is approximately maintained through the training objective: the pinball loss naturally penalizes quantile crossings, so that a well-trained IQN produces approximately non-crossing quantile curves.
+
+
+## Comparison with Variational Autoencoders {#sec-no-vae}
+
+It is worth pausing to compare the noise outsourcing representation $Y = G^*(U, X)$ with the latent variable model used in Variational Autoencoders (VAEs), one of the most popular generative models in modern machine learning. Both approaches map a latent random variable through a deterministic function to produce the output, but they differ in fundamental ways that have important practical consequences. Understanding these differences helps clarify why we advocate for the quantile-based approach throughout this book.
+
+The comparison is instructive because VAEs are perhaps the most widely used deep generative model, and understanding where noise outsourcing differs helps clarify the advantages of the GBC approach.
+
+In a VAE, the latent variable $Z$ follows a *learned* distribution, typically an approximate posterior $q_\phi(z | x)$ parameterized by an encoder network. The decoder $p_\psi(x | z)$ maps the latent variable back to the data space. Training requires balancing a reconstruction loss against a KL divergence term $D_{\text{KL}}(q_\phi(z|x) \| p(z))$ that regularizes the approximate posterior toward the prior $p(z)$. This KL term is the source of a well-known pathology: *posterior collapse*, where the encoder learns to ignore the input and produce $q_\phi(z|x) \approx p(z)$ for all $x$, effectively throwing away latent information.
+
+In the noise outsourcing framework, none of these complications arise. The latent variable $U \sim \mathrm{Uniform}(0,1)$ is *fixed* --- it is not learned, not optimized, and not regularized. There is no encoder network, no recognition model, and no variational objective. The entire modeling effort goes into learning the deterministic map $G^*(\tau, x)$, which is a standard regression problem amenable to standard optimization techniques (SGD, Adam, learning rate schedules). There is no KL divergence term, no tension between reconstruction and regularization, and no posterior collapse.
+
+The uniform latent space has a direct probabilistic interpretation: $\tau$ is a quantile level, and $G^*(\tau, x)$ is the value at that quantile. This interpretability is a distinctive advantage of the GBC approach. When a practitioner queries the model at $\tau = 0.05$ and $\tau = 0.95$, they know they are getting the 5th and 95th percentiles --- no additional calibration or interpretation is needed. In a VAE, by contrast, the latent space has no such built-in meaning: the "coordinates" of the latent vector are arbitrary, and understanding what they represent requires additional analysis (e.g., traversal plots or disentanglement metrics).
+
+The trade-off is that the noise outsourcing representation is inherently one-dimensional in the latent space (per output component). VAEs can use high-dimensional latent spaces to capture complex structure, which can be advantageous for high-dimensional data like images. However, the autoregressive extension in @sec-no-multivariate shows that multiple independent uniform draws can model arbitrary joint distributions, achieving the same expressive power through a different mechanism.
+
+There is also a connection to normalizing flows, which are another popular class of generative models. A normalizing flow learns an invertible map $f_\phi : \mathcal{Z} \to \mathcal{Y}$ from a base distribution (usually Gaussian) to the target. The key constraint is invertibility, which limits the architecture to invertible layers (coupling layers, autoregressive transforms, etc.) and requires computing the Jacobian determinant for the density. The noise outsourcing map $G^*$ faces no such constraint: it need not be invertible, it does not require a Jacobian, and it works with a uniform base rather than a Gaussian one. The price we pay is that $G^*$ does not give us a density --- but for Bayesian computation, we rarely need the density. We need samples and quantiles, and those are exactly what $G^*$ provides.
+
+The following table summarizes the key differences among the three approaches:
+
+| Feature | Noise Outsourcing (GBC) | VAE | Normalizing Flow |
+|---|---|---|---|
+| Base distribution | Fixed $\mathrm{Uniform}(0,1)$ | Learned $q_\phi(z|x)$ | Fixed (e.g., $\mathcal{N}(0,1)$) |
+| Map learned | $G^*(\tau, x)$ (quantile) | Decoder $p_\psi(x|z)$ | Invertible $f_\phi(z)$ |
+| Density available? | No (density-free) | Approximate (ELBO bound) | Yes (exact via Jacobian) |
+| Invertibility required? | No | No | Yes |
+| Quantiles available? | Yes (by construction) | No (requires post-hoc) | No (requires post-hoc) |
+| Posterior collapse? | Impossible | Common pathology | Not applicable |
+
+: Comparison of generative approaches. {#tbl-no-generative-comparison}
+
+
+## Connection to Optimal Transport {#sec-no-ot}
+
+The noise outsourcing theorem has a natural connection to optimal transport theory that illuminates both why the quantile function is the right object to learn and why the CRPS is a natural loss function for training. Optimal transport, originally formulated by Gaspard Monge in 1781 in the context of moving earth, asks: what is the cheapest way to reshape one distribution of mass into another? The field experienced a renaissance in the late 20th century through the work of Brenier, Villani, and others, and has become increasingly important in machine learning, statistics, and applied mathematics. The connection to our setting is immediate: the noise outsourcing map $G^*(\tau, x)$ reshapes the uniform distribution into the conditional distribution $F_{Y|X}(\cdot|x)$, and it does so in the cheapest possible way.
+
+The general optimal transport problem asks: given two probability measures $\mu$ and $\nu$ on $\mathbb{R}^d$, find the map $T : \mathbb{R}^d \to \mathbb{R}^d$ that pushes $\mu$ forward to $\nu$ (i.e., $T_{\#}\mu = \nu$) while minimizing the transport cost $\int \|T(x) - x\|^2 \, d\mu(x)$. The Kantorovich relaxation of this problem, which allows for mass splitting, leads to the linear programming formulation that is standard in the modern treatment.
+
+In one dimension, the answer is beautifully simple and does not require any optimization: the optimal map is the composition of the quantile functions.
+
+We motivate this with a physical picture. Imagine a pile of sand distributed along the real line according to measure $\mu$, and we want to reshape it into the distribution $\nu$. Each grain of sand at position $x$ must be moved to some new position $T(x)$, and the cost of moving it is proportional to the squared distance $|T(x) - x|^2$. The cheapest way to rearrange the sand is the "monotone" way: the grain at the $\tau$-th quantile of $\mu$ should be sent to the $\tau$-th quantile of $\nu$. Any non-monotone rearrangement would involve "crossing" --- some sand moving left past other sand moving right --- which always increases the total cost. The following proposition makes this intuition precise.
+
+::: {.callout-tip appearance="simple" title="Proposition 4.3: Optimal Transport in 1D"}
+Let $\mu$ and $\nu$ be probability measures on $\mathbb{R}$ with CDFs $F$ and $G$, respectively. The unique (a.e.) map $T^*$ minimizing $\int |T(x) - x|^2 \, dF(x)$ subject to $T_{\#}\mu = \nu$ is
+$$
+T^* = G^{-1} \circ F.
+$$
+:::
+
+This result is Brenier's theorem specialized to one dimension, where it takes a particularly elegant form. The optimal transport map is simply the composition of the two quantile functions: first transform $x$ to its quantile rank $\tau = F(x)$ under the source distribution, then map to the corresponding value $G^{-1}(\tau)$ under the target distribution. The monotonicity of $T^*$ follows from the monotonicity of both $F$ and $G^{-1}$. In higher dimensions, Brenier's theorem still guarantees existence and uniqueness of an optimal transport map (under mild conditions), but the map is no longer a simple composition of one-dimensional quantile functions --- it becomes the gradient of a convex function, and computing it requires solving a partial differential equation or a linear program. The one-dimensional elegance of Proposition 4.3 is a major reason why the quantile-based GBC approach is so natural for univariate conditional distributions, and why the autoregressive decomposition of @sec-no-multivariate is the right strategy for extending to multiple dimensions.
+
+Applied to the noise outsourcing setting: the source distribution is $\mathrm{Uniform}(0,1)$ (with CDF $F(\tau) = \tau$, the identity) and the target is $F_{Y|X}(\cdot | x)$. The optimal map becomes $T^*(\tau) = G^{-1} \circ F(\tau) = F_{Y|X}^{-1}(\tau | x) = G^*(\tau, x)$. The noise outsourcing theorem is telling us that the conditional quantile function *is* the optimal transport map from uniform noise to the conditional distribution. This is not a coincidence --- it is a direct consequence of the fact that the quantile function is the unique monotone increasing map with the right push-forward property.
+
+A key consequence of the optimal transport perspective is the following characterization of the Wasserstein distance. For two probability distributions $F$ and $G$ on $\mathbb{R}$, the $p$-Wasserstein distance is
+$$
+W_p(F, G) = \left(\int_0^1 |F^{-1}(\tau) - G^{-1}(\tau)|^p \, d\tau\right)^{1/p}.
+$$ {#eq-no-wasserstein}
+This is a remarkable formula: the Wasserstein distance between two distributions equals the $L^p$ distance between their quantile functions, so there is no need to solve an optimization problem --- the Wasserstein distance reduces to a simple integral. In higher dimensions, computing the Wasserstein distance requires solving a linear program or regularized optimal transport problem, which can be computationally expensive. In one dimension, the quantile representation gives us the answer in closed form.
+
+For $p = 2$, we have the *Wasserstein-2* (or earth mover's) distance:
+$$
+W_2(F, G) = \left(\int_0^1 |F^{-1}(\tau) - G^{-1}(\tau)|^2 \, d\tau\right)^{1/2}.
+$$
+This means that if we learn an approximate quantile function $\hat{G}(\tau, x)$ and the true one is $G^*(\tau, x)$, then the $L^2$ error $\int_0^1 |\hat{G}(\tau, x) - G^*(\tau, x)|^2 \, d\tau$ is exactly the squared Wasserstein-2 distance between the estimated and true conditional distributions. This is a remarkable property: the function approximation error in quantile space has a direct interpretation as a distributional distance. No other representation of distributions (densities, CDFs, moment sequences) enjoys such a clean connection to optimal transport. It means that improving the network's approximation of $G^*$ --- in the ordinary $L^2$ sense --- directly improves the distributional accuracy as measured by the most natural metric on probability distributions.
+
+*CRPS as a Wasserstein loss.* The Wasserstein distance gives us a way to measure how close two distributions are, but we need a practical *loss function* that we can minimize during training. The connection is provided by the Continuous Ranked Probability Score (CRPS), a strictly proper scoring rule for evaluating probabilistic forecasts [@gneiting2007strictly]. "Strictly proper" means that the expected score is uniquely minimized when the predictive distribution equals the true data-generating distribution --- there is no incentive to hedge or misreport. For a predictive distribution $F$ and an observation $y$, the CRPS is defined as
+$$
+\mathrm{CRPS}(F, y) = \int_{-\infty}^{\infty} \left(F(z) - \mathbf{1}(z \geq y)\right)^2 dz.
+$$
+It can be shown that the CRPS admits the following equivalent representation in terms of quantile functions:
+$$
+\mathrm{CRPS}(F, y) = \int_0^1 2\,\rho_\tau\!\left(y - F^{-1}(\tau)\right) d\tau,
+$$ {#eq-no-crps-pinball}
+where $\rho_\tau(u) = u(\tau - \mathbf{1}(u < 0))$ is the check (pinball) loss from quantile regression.
+
+Furthermore, the expected CRPS between the predictive distribution $F$ and the true distribution $G$ satisfies:
+$$
+\mathbb{E}_{Y \sim G}[\mathrm{CRPS}(F, Y)] = W_1(F, G) - \tfrac{1}{2}\mathbb{E}|Y - Y'| + \text{sharpness term}.
+$$
+Specifically, $\mathbb{E}_{Y \sim G}[\mathrm{CRPS}(F, Y)] = W_1(F, G) - \tfrac{1}{2}\mathbb{E}|Y - Y'|$ where $Y, Y' \sim G$ independently [@gneiting2007strictly]. The second term $\tfrac{1}{2}\mathbb{E}|Y - Y'|$ is the sharpness of $G$: it measures the spread of the true distribution, not the forecast error. The CRPS is, up to this sharpness correction, the 1-Wasserstein distance between the predictive and true distributions. This is why minimizing the pinball loss --- which is the integrand in @eq-no-crps-pinball --- is a natural training objective for quantile neural networks. Each quantile level $\tau$ contributes to the overall CRPS, and minimizing the expected pinball loss over random $\tau$ amounts to minimizing the Wasserstein distance to the true conditional distribution. In practice, the IQN training procedure (described in @sec-iqn) samples random quantile levels $\tau \sim \mathrm{Uniform}(0,1)$ at each training step and minimizes the corresponding pinball loss. This stochastic approximation to the CRPS integral converges to the true CRPS as training progresses, which means that the learned quantile function $\hat{G}$ converges to the true $G^*$ in the Wasserstein sense.
+
+This connection closes the loop, and it is worth summarizing the four pillars of the GBC framework that this chapter has established. First, the noise outsourcing theorem guarantees existence of $G^*(\tau, x)$ --- the conditional quantile function that encodes the full conditional distribution. Second, $G^*$ is the optimal transport map from $\mathrm{Uniform}(0,1)$ to $F_{Y|X}(\cdot|x)$, which gives it a geometric interpretation as the most efficient way to reshape uniform noise into the target distribution. Third, the CRPS and its pinball loss integrand provide a natural training objective that measures the Wasserstein distance between our learned $\hat{G}$ and the truth $G^*$. Fourth, the universal approximation theorem guarantees that neural networks can approximate $G^*$ to arbitrary accuracy on compact domains. These four results --- existence, optimality, loss function, and approximability --- form the theoretical foundation on which the entire GBC framework rests.
+
+There is a satisfying intellectual economy here. Many methods in machine learning are justified by heuristic arguments ("it works well in practice") or by analogies to neuroscience ("it mimics the brain"). The GBC approach, by contrast, rests on precise mathematical results. The noise outsourcing theorem is a theorem of probability theory, not a conjecture or an empirical observation. The optimality of the quantile map is a theorem of optimal transport. The equivalence of the CRPS and the Wasserstein distance is a theorem of statistics. And the universal approximation guarantee is a theorem of function analysis. Together, these results provide an end-to-end mathematical justification for the GBC algorithm that is rare in the deep learning literature.
+
+In @sec-iqn, we turn these ideas into a concrete algorithm.
+
+
+## Summary {#sec-no-summary}
+
+Let us take stock of what this chapter has established. The noise outsourcing theorem is the single result on which the entire GBC enterprise rests, and we have developed it from multiple angles to build both mathematical understanding and geometric intuition.
+
+We began with the noise outsourcing theorem (Theorem 4.1), which tells us that any conditional distribution $F_{Y|X}(\cdot|x)$ can be represented as a deterministic function $G^*(\tau, x)$ of a uniform random variable $\tau$ and the conditioning variable $x$. This function is the conditional quantile function, and it encodes the entire conditional distribution without loss of information.
+
+We then extended the result in three important directions.
+The multivariate extension (Theorem 4.2) showed that joint distributions over $d$-dimensional vectors can be handled through an autoregressive decomposition, where each component is generated by its own quantile function conditioning on all previously generated components.
+The Bayesian corollary (Corollary 4.1) showed how to apply noise outsourcing to posterior inference, replacing the data-parameter roles and enabling posterior sampling via a single forward pass through a learned network.
+The optimal transport connection (Proposition 4.3) revealed that the quantile function is not just *a* map from uniform noise to the target distribution, but the *optimal* such map in the Wasserstein-2 sense, and that the CRPS training loss directly measures the Wasserstein distance between the learned and true distributions.
+
+Along the way, we established the universality of the approach (Proposition 4.2):
+neural networks can approximate $G^*$ to arbitrary accuracy, regardless of the distribution family.
+We demonstrated this universality with worked examples spanning continuous (Gaussian),
+discrete (zero-inflated Poisson), and bimodal (mixture) distributions.
+We also compared the noise outsourcing representation with VAEs and normalizing flows,
+highlighting the advantages of the fixed-uniform-latent approach:
+no KL divergence, no posterior collapse, and direct access to quantiles by construction.
+
+The reader may notice a recurring theme: at every turn, the quantile function emerges as the natural object to work with. It is the noise outsourcing map, the optimal transport map, the sufficient representation of the conditional distribution, and the function whose $L^2$ error equals the Wasserstein distance to the truth. This is not a coincidence --- it reflects the deep connection between quantile functions and the geometry of probability distributions. In one dimension, quantile functions *are* the geometry of distributions, and the GBC framework is built squarely on this insight.
+
+The stage is now set for @sec-iqn, where we turn the noise outsourcing theorem into a practical algorithm. The theorem tells us *what* to learn (the conditional quantile function $G^*$); the next chapter will tell us *how* to learn it using the Implicit Quantile Network architecture.
+
+
+## Exercises {#sec-no-exercises}
+
+The exercises below are designed to build facility with the noise outsourcing theorem and its connections to optimal transport, sufficient statistics, and generative modeling. Exercises 4.1--4.4 develop core theoretical skills, while Exercises 4.5--4.8 explore the multivariate extension, discrete distributions, the comparison with VAEs, and the connection to Kolmogorov's representation theorem. We recommend that readers new to quantile functions start with Exercises 4.1 and 4.2, which provide hands-on practice with the noise outsourcing construction for familiar distributions.
+
+::: {#exr-no-normal}
+**Noise outsourcing for the Gaussian model.**
+Consider $Y \mid X = x \sim \mathcal{N}(\mu(x), \sigma^2(x))$ where $\mu(x) = x^2$ and $\sigma(x) = e^{x/2}$.
+
+(a) Derive the noise outsourcing map $G^*(\tau, x) = F_{Y|X}^{-1}(\tau \mid x)$ explicitly.
+(b) Verify that for $U \sim \mathrm{Uniform}(0,1)$ independent of $X$, the random variable $G^*(U, X)$ has the same conditional distribution as $Y \mid X$.
+(c) Show that $G^*(\tau, x)$ is monotone increasing in $\tau$ for every fixed $x$.
+(d) Compute the conditional median ($\tau = 0.5$) and the interquartile range ($\tau = 0.75$ minus $\tau = 0.25$) as functions of $x$.
+:::
+
+::: {#exr-no-mixture}
+**Quantile function for a Gaussian mixture.**
+Consider $Y \mid X = x \sim \frac{1}{2}\mathcal{N}(-2, 1) + \frac{1}{2}\mathcal{N}(2, 1)$ (the distribution does not depend on $x$ in this exercise).
+
+(a) Write down the CDF $F_Y(y)$ as a mixture of normal CDFs.
+(b) Argue that the quantile function $G^*(\tau) = F_Y^{-1}(\tau)$ cannot be written in closed form.
+(c) Using Python (e.g., `scipy.optimize.brentq`), numerically compute and plot $G^*(\tau)$ for $\tau \in (0.01, 0.99)$. Describe the shape of the curve and explain how it reflects the bimodality.
+(d) Generate 10,000 samples using $Y = G^*(U)$ with $U \sim \mathrm{Uniform}(0,1)$ and verify the histogram matches the true density.
+:::
+
+::: {#exr-no-wasserstein}
+**Wasserstein distance via quantile functions.**
+Let $F = \mathcal{N}(0, 1)$ and $G = \mathcal{N}(\mu, \sigma^2)$.
+
+(a) Compute $F^{-1}(\tau) = \Phi^{-1}(\tau)$ and $G^{-1}(\tau) = \mu + \sigma\Phi^{-1}(\tau)$.
+(b) Show that the squared Wasserstein-2 distance is
+$$
+W_2^2(F, G) = \int_0^1 |\Phi^{-1}(\tau) - \mu - \sigma\Phi^{-1}(\tau)|^2 \, d\tau = (\sigma - 1)^2 + \mu^2.
+$$
+*Hint*: Expand the square as $|(1-\sigma)\Phi^{-1}(\tau) - \mu|^2 = (1-\sigma)^2[\Phi^{-1}(\tau)]^2 - 2\mu(1-\sigma)\Phi^{-1}(\tau) + \mu^2$. Integrate term by term using $\int_0^1 [\Phi^{-1}(\tau)]^2 \, d\tau = 1$ (the variance of a standard normal) and $\int_0^1 \Phi^{-1}(\tau) \, d\tau = \mathbb{E}[Z] = 0$ for $Z \sim \mathcal{N}(0,1)$. The cross term $-2\mu(1-\sigma)\int_0^1\Phi^{-1}(\tau)\,d\tau$ vanishes because $\int_0^1\Phi^{-1}(\tau)\,d\tau = \mathbb{E}[Z] = 0$, leaving $(1-\sigma)^2 + \mu^2 = (\sigma-1)^2 + \mu^2$.
+(c) Interpret the formula: what does each term measure geometrically?
+(d) Compute $W_1(F, G)$ for the same pair of distributions by evaluating $\int_0^1 |\Phi^{-1}(\tau) - \mu - \sigma\Phi^{-1}(\tau)| \, d\tau$ numerically for $\mu = 1$, $\sigma = 2$.
+:::
+
+::: {#exr-no-monotone}
+**Monotonicity of the quantile function.**
+Let $F_{Y|X}(\cdot | x)$ be a conditional CDF for some joint distribution $(X, Y)$.
+
+(a) Prove that the quantile function $G^*(\tau, x) = \inf\{y : F_{Y|X}(y | x) \geq \tau\}$ is non-decreasing in $\tau$ for every fixed $x$. *Hint*: If $\tau_1 < \tau_2$, the set $\{y : F(y) \geq \tau_2\}$ is a subset of $\{y : F(y) \geq \tau_1\}$.
+(b) Give an example where $G^*(\cdot, x)$ is strictly increasing (i.e., continuous distribution).
+(c) Give an example where $G^*(\cdot, x)$ has flat regions (i.e., distribution with atoms).
+(d) Why is monotonicity in $\tau$ important for the GBC framework? What would go wrong if a learned $\hat{G}(\tau, x)$ violated monotonicity? *Hint*: Think about what it means for the "predictive CDF" to be non-decreasing.
+:::
+
+::: {#exr-no-autoregressive}
+**Autoregressive noise outsourcing for bivariate normal.**
+Let $(\theta_1, \theta_2) \mid y \sim \mathcal{N}_2\!\left(\begin{pmatrix} \mu_1 \\ \mu_2 \end{pmatrix}, \begin{pmatrix} \sigma_1^2 & \rho\sigma_1\sigma_2 \\ \rho\sigma_1\sigma_2 & \sigma_2^2 \end{pmatrix}\right)$.
+
+(a) Write down $G_1^*(\tau_1, y) = F_{\theta_1|y}^{-1}(\tau_1)$ for the marginal of $\theta_1$.
+(b) Derive the conditional distribution $\theta_2 \mid \theta_1, y$ and write down $G_2^*(\tau_2, y, \theta_1) = F_{\theta_2|\theta_1,y}^{-1}(\tau_2)$.
+(c) Verify that drawing $\tau_1, \tau_2 \stackrel{\text{iid}}{\sim} \mathrm{Uniform}(0,1)$ and computing $\theta_1 = G_1^*(\tau_1, y)$, $\theta_2 = G_2^*(\tau_2, y, \theta_1)$ produces draws from the correct bivariate normal. *Hint*: Check that the marginal and conditional distributions match.
+(d) Implement this in Python for $\mu_1 = 1, \mu_2 = 2, \sigma_1 = 1, \sigma_2 = 1.5, \rho = 0.7$. Generate 5000 samples and plot the resulting scatter plot alongside the true density contours.
+:::
+
+::: {#exr-no-zip}
+**Noise outsourcing for the zero-inflated Poisson.**
+Consider the zero-inflated Poisson model $Y \sim \mathrm{ZIP}(\pi_0, \lambda)$ with $\pi_0 = 0.4$ and $\lambda = 3$.
+
+(a) Compute $P(Y = 0)$, $P(Y = 1)$, $P(Y = 2)$, and $P(Y = 3)$ explicitly.
+(b) Write down the generalized quantile function $G^*(\tau)$ as a step function, specifying the breakpoints.
+(c) What fraction of the $\tau$-axis is mapped to $Y = 0$? Explain why this fraction exceeds $e^{-\lambda}$, the probability of zero under a pure Poisson.
+(d) If we train a neural network $\hat{G}(\tau)$ that produces continuous output, it cannot exactly represent the step function $G^*$. Discuss how this approximation affects the generated samples. Would rounding the output help?
+:::
+
+::: {#exr-no-vae}
+**Noise outsourcing versus VAE.**
+Consider learning the distribution $Y \sim 0.5 \cdot \mathcal{N}(-3, 0.5^2) + 0.5 \cdot \mathcal{N}(3, 0.5^2)$.
+
+(a) A VAE with a 1D latent space $Z \sim \mathcal{N}(0,1)$ and decoder $Y = \mu_\psi(Z) + \sigma_\psi(Z) \cdot \epsilon$, $\epsilon \sim \mathcal{N}(0,1)$, is trained to maximize the ELBO. Explain why the KL term $D_{\text{KL}}(q_\phi(z|y) \| \mathcal{N}(0,1))$ creates tension with accurately modeling the bimodal distribution.
+(b) Write down the noise outsourcing map $G^*(\tau)$ for this mixture (you may express it using numerical inversion). Does it suffer from the same tension?
+(c) Plot the quantile function $G^*(\tau)$ and describe its shape. Identify the steep region and explain its probabilistic meaning.
+(d) Argue that the noise outsourcing representation cannot suffer from "posterior collapse" (the pathology where the VAE encoder ignores the input). What structural feature of the representation prevents this?
+:::
+
+::: {#exr-no-kolmogorov}
+**Kolmogorov's superposition and quantile functions.**
+Kolmogorov's superposition theorem says any continuous $f : [0,1]^d \to \mathbb{R}$ can be written as $f(x_1, \ldots, x_d) = \sum_{j=0}^{2d} \Psi_j(\sum_{i=1}^d \phi_{ij}(x_i))$.
+
+(a) Compare this to the autoregressive noise outsourcing decomposition in @eq-no-autoregressive. Both reduce multivariate functions to compositions of univariate functions. What is the key structural difference?
+(b) Kolmogorov's theorem requires $2d + 1$ outer functions $\Psi_j$. The autoregressive decomposition requires $d$ quantile functions $G_j^*$. Why does the autoregressive approach need fewer functions? *Hint*: Think about what additional structure the quantile functions have (monotonicity, probabilistic interpretation) that Kolmogorov's functions lack.
+(c) Modern neural networks are sometimes called "Kolmogorov--Arnold networks" (KANs). Discuss why the IQN architecture, which learns quantile functions, may be better suited to distributional estimation than a generic KAN.
+:::
