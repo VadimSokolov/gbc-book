@@ -362,7 +362,8 @@ First, we develop the theoretical foundations of GBC, connecting the noise outso
 Parzen's quantile framework, and deep network approximation theory into a rigorous
 mathematical framework.
 Second, we provide the IQN architecture and training procedures, implemented in the
-open-source `gbc` Python package, that make GBC practical.
+open-source `gbc` Python package (<https://github.com/VadimSokolov/gbc>),
+that make GBC practical.
 Third, we demonstrate GBC across five application domains --- surrogates, inference,
 prediction, decision-making, and causal inference --- showing that it is competitive with
 or superior to existing methods in each.

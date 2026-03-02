@@ -98,15 +98,24 @@ device = get_device()  # cuda > mps > cpu
 
 The book ships with a companion Python package called `gbc`. Every code listing in the chapters imports from this package rather than re-implementing algorithms from scratch. This keeps the chapter code focused on *using* the methods rather than defining them.
 
-Clone the book repository and install in editable mode:
+The `gbc` package is hosted on GitHub at
+<https://github.com/VadimSokolov/gbc>.
+You can install it directly with pip:
 
 ```bash
-git clone https://github.com/polson-sokolov/gbc-book.git
-cd gbc-book
+pip install git+https://github.com/VadimSokolov/gbc.git
+```
+
+To follow along with the book examples and modify the source, clone and
+install in editable mode instead:
+
+```bash
+git clone https://github.com/VadimSokolov/gbc.git
+cd gbc
 pip install -e ".[dev]"
 ```
 
-The `-e` (editable) flag means that changes to the source files in `gbc/` take effect immediately without reinstalling.
+The `-e` (editable) flag means that changes to the source files take effect immediately without reinstalling.
 
 The package is organized into the following modules:
 
