@@ -199,11 +199,7 @@ We use $d = 256$ throughout: for very low-dimensional problems ($p \leq 3$), $d 
 
 ## The Three-Term Loss {#sec-iqn-loss}
 
-Training the IQN requires a loss function that encourages the output $\hat{Q}(\tau \mid x)$ to match the true conditional quantile $F^{-1}_{Y|X}(\tau)$. The natural choice is the **pinball loss** from quantile regression (@sec-quantiles):
-$$
-\rho_\tau(u) = u \cdot (\tau - \mathbf{1}_{u < 0}) = \max\bigl(\tau \, u, \; (\tau - 1) \, u\bigr),
-$$ {#eq-pinball}
-where $u = y - \hat{Q}(\tau \mid x)$ is the residual.
+Training the IQN requires a loss function that encourages the output $\hat{Q}(\tau \mid x)$ to match the true conditional quantile $F^{-1}_{Y|X}(\tau)$. The natural choice is the **pinball loss** $\rho_\tau$ from @eq-check-loss, where $\rho_\tau(u) = \max(\tau u, (\tau-1)u)$ and $u = y - \hat{Q}(\tau \mid x)$ is the residual.
 
 A proper scoring rule is a loss function that is uniquely minimized when the predicted distribution equals the true conditional distribution. A loss that is not strictly proper can be "gamed" --- a miscalibrated forecast may achieve a lower loss than the truth. Minimizing the expected pinball loss over $\tau$ yields the CRPS --- the continuous ranked probability score --- which is a strictly proper scoring rule [@gneiting2007strictly]:
 $$

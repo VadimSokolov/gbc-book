@@ -30,11 +30,7 @@ The computational challenge is the denominator in @eq-bayes-theorem --- the marg
 
 The standard solution, developed over the past four decades, is Markov chain Monte Carlo (MCMC): construct a Markov chain whose stationary distribution is $\pi(\theta \mid y)$, run it for $T$ iterations, and use the samples $\theta^{(1)}, \ldots, \theta^{(T)}$ as a Monte Carlo approximation to the posterior. MCMC *avoids computing the marginal likelihood entirely*: the Metropolis-Hastings acceptance ratio $p(y \mid \theta') \pi(\theta') / [p(y \mid \theta) \pi(\theta)]$ cancels the denominator, so we only need to evaluate the unnormalized posterior $p(y \mid \theta) \pi(\theta)$.
 
-MCMC is among the most important computational developments in statistics since the bootstrap. The Metropolis algorithm [@metropolis1953equation], the Gibbs sampler [@geman1984stochastic; @gelfand1990sampling], and Hamiltonian Monte Carlo [@neal2011mcmc] are workhorses of modern Bayesian analysis, implemented in powerful software packages like Stan [@carpenter2017stan], JAGS, and NumPyro. But MCMC has well-known limitations that motivate the search for alternatives. Convergence is uncertain: how long we must run the chain before trusting the samples depends on the geometry of the posterior, and no general-purpose diagnostic guarantees convergence --- in practice we run multiple chains and check for agreement, but this is heuristic. The $\hat{R}$ diagnostic of @gelman1992inference is the most widely used convergence check: it compares the between-chain variance to the within-chain variance, and values near 1 suggest (but do not guarantee) convergence. Even with $\hat{R} < 1.01$ for all parameters, there is no guarantee that the chain has discovered all modes of a multimodal posterior.
-
-Mixing can fail in high-dimensional or multimodal posteriors, where chains get trapped in local modes; sophisticated algorithms such as Hamiltonian Monte Carlo and parallel tempering help, but the problem is fundamental. For the bimodal example we will encounter in @sec-bi-bimodal, a standard Metropolis chain might spend 10,000 iterations in one mode before (possibly) jumping to the other. The result is a posterior approximation that severely underrepresents one mode and overrepresents the other.
-
-Cost scales with the number of datasets: MCMC must be rerun from scratch for each new observation, so fitting the same model to 10,000 sensors requires 10,000 separate chains, each costing $O(Tn)$ where $T$ is the chain length and $n$ is the dataset size. Finally, MCMC requires evaluating $p(y \mid \theta)$ at each iteration, which rules it out entirely for simulator-based models where we can *generate* data from the model but cannot write down a closed-form likelihood. The question is not whether MCMC is correct (it is, asymptotically), but whether there is a more efficient computational route to the same target.
+MCMC is among the most important computational developments in statistics --- the Metropolis algorithm [@metropolis1953equation], the Gibbs sampler [@geman1984stochastic; @gelfand1990sampling], and Hamiltonian Monte Carlo [@neal2011mcmc] with NUTS [@hoffman2014no] powering Stan [@carpenter2017stan] and other probabilistic programming languages. Its limitations --- uncertain convergence, mixing failures in high dimensions, per-dataset cost, and the requirement to evaluate $p(y \mid \theta)$ --- were discussed in @sec-intro-paradigms. Here we focus on a structural limitation: MCMC requires evaluating the likelihood at every proposed parameter value. For simulator-based models, this is a non-starter.
 
 
 ## ABC: The First Likelihood-Free Method {#sec-bi-abc}
@@ -124,7 +120,7 @@ The algorithm has four steps: simulate, summarize, train, and infer. The first t
 $$
 \min_\phi \frac{1}{N} \sum_{i=1}^N \mathbb{E}_\tau \left[\rho_\tau\!\left(\theta^{(i)} - G_\phi(\tau, z^{(i)})\right)\right],
 $$
-where $\rho_\tau(u) = \max(\tau u, (\tau - 1)u)$ is the pinball loss and $\tau \sim \text{Uniform}(0, 1)$.
+where $\rho_\tau$ is the pinball loss (@eq-check-loss) and $\tau \sim \text{Uniform}(0, 1)$.
 
 *Step 4 (Inference).* For observed data $y_{\text{obs}}$:
 

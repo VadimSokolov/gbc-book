@@ -197,43 +197,13 @@ Moreover, different distortion functions $g$ correspond to different attitudes t
 
 ## Wang Distortion and Bayesian Updating {#sec-meu-wang}
 
-A connection exists between Bayesian updating and probability distortion. @wang1996premium and @wang2000class introduced a parametric family of distortion functions that arises naturally from the normal distribution:
+A connection exists between Bayesian updating and probability distortion. @wang1996premium and @wang2000class introduced a parametric family of distortion functions:
 $$
 g(p) = \Phi\left(\lambda_1 \Phi^{-1}(p) + \lambda_0\right),
-$$ {#eq-wang-distortion}
-where $\Phi$ is the standard normal CDF, $\Phi^{-1}$ is its inverse, and $\lambda_1 > 0$, $\lambda_0 \in \mathbb{R}$ are parameters. This family has several attractive properties. It is closed under composition: applying two Wang distortions in sequence yields another Wang distortion. The identity $g(p) = p$ is a special case with $\lambda_1 = 1$, $\lambda_0 = 0$. The family maps $[0,1]$ to $[0,1]$ with $g(0) = 0$ and $g(1) = 1$, and the parameters $\lambda_1$ and $\lambda_0$ control the shape and shift of the distortion.
+$$ {#eq-wang-distortion-meu}
+where $\Phi$ is the standard normal CDF and $\lambda_1 > 0$, $\lambda_0 \in \mathbb{R}$ are parameters. This family is closed under composition, maps $[0,1]$ to $[0,1]$, and includes the identity ($\lambda_1 = 1$, $\lambda_0 = 0$) as a special case.
 
-The connection between Wang distortions and Bayesian inference is best illustrated in the normal-normal conjugate model. Consider
-$$
-y_1, \ldots, y_n \mid \theta \sim N(\theta, \sigma^2), \qquad \theta \sim N(\mu_0, \alpha^2).
-$$
-The sufficient statistic is $s = \sum_{i=1}^n y_i$, and the posterior is $\theta \mid y \sim N(\mu_*, \sigma_*^2)$ with
-$$
-\mu_* = \frac{\sigma^2 \mu_0 + n\alpha^2 \bar{y}}{t}, \quad \sigma_*^2 = \frac{\alpha^2 \sigma^2}{t}, \quad t = \sigma^2 + n\alpha^2.
-$$ {#eq-normal-posterior}
-
-The prior and posterior survival functions are related by a Wang distortion:
-$$
-1 - \Phi\!\left(\frac{\theta - \mu_*}{\sigma_*}\right) = g\!\left(1 - \Phi\!\left(\frac{\theta - \mu_0}{\alpha}\right)\right),
-$$
-where $g$ is the Wang distortion @eq-wang-distortion with parameters
-$$
-\lambda_1 = \frac{\alpha}{\sigma_*}, \qquad \lambda_0 = \frac{\alpha \lambda_1(s - n\mu_0)}{t}.
-$$ {#eq-wang-params}
-
-*Proof.* Starting from the right-hand side:
-$$
-g\!\left(1 - \Phi\!\left(\frac{\theta - \mu_0}{\alpha}\right)\right) = g\!\left(\Phi\!\left(\frac{-({\theta - \mu_0})}{\alpha}\right)\right) = \Phi\!\left(-\lambda_1 \frac{\theta - \mu_0}{\alpha} + \lambda_0\right).
-$$
-Setting $\lambda_1 = \alpha / \sigma_*$, the argument becomes
-$$
--\frac{\theta - \mu_0}{\sigma_*} + \lambda_0 = -\frac{\theta - (\mu_0 + \sigma_* \lambda_0)}{\sigma_*}.
-$$
-For this to equal $\Phi((\mu_* - \theta)/\sigma_*)$, we need $\mu_0 + \sigma_* \lambda_0 = \mu_*$, which gives $\lambda_0 = (\mu_* - \mu_0)/\sigma_* = \alpha\lambda_1(s - n\mu_0)/t$. $\square$
-
-*Bayesian updating of the prior to the posterior is equivalent to applying a Wang distortion to the prior quantile function.* The distortion parameters $\lambda_1$ and $\lambda_0$ depend on the data through the sufficient statistic $s$ and the prior-data balance captured by $t$. The scale parameter $\lambda_1 = \alpha/\sigma_*$ measures how much the posterior concentrates relative to the prior: when $\lambda_1 > 1$, the posterior is more concentrated (the data has been informative). The shift parameter $\lambda_0$ captures the direction of the update: when $\lambda_0 > 0$, the posterior mean exceeds the prior mean because the data lies above the prior expectation.
-
-When $n$ is large, $\lambda_1 \approx \alpha\sqrt{n}/\sigma$ grows, and the distortion becomes more extreme---the posterior concentrates more tightly than the prior. When $\bar{y} \approx \mu_0$, the shift $\lambda_0$ is small, and the posterior is centered near the prior mean.
+In the normal-normal conjugate model, Bayesian updating is exactly a Wang distortion: the posterior CDF is $g$ composed with the prior CDF, where $\lambda_1 = \alpha/\sigma_*$ and $\lambda_0 = (\mu_* - \mu_0)/\sigma_*$ (see the derivation in @sec-bi-normal, @eq-wang-distortion). The distortion steepens the CDF when data are informative ($\lambda_1 > 1$) and shifts it when the posterior mean differs from the prior mean ($\lambda_0 \neq 0$). The IQN learns this distortion from simulated data.
 
 Let us illustrate the Wang distortion for a concrete normal-normal model.
 
@@ -381,7 +351,7 @@ $$
 
 ## The GenBayes-MEU Algorithm {#sec-meu-algorithm}
 
-We now assemble the pieces into a complete algorithm.
+We now assemble the pieces into a complete algorithm. Following the GBC template (Algorithm 10.2), but adapted for utility estimation:
 
 ::: {.callout-important appearance="simple" title="Algorithm: GenBayes-MEU"}
 *Input:* Prior $\pi(\theta)$, forward model $y \sim p(y \mid \theta)$ or $y = f(\theta)$, utility function $U(d, \theta)$, decision space $\mathcal{D}$.
@@ -398,7 +368,7 @@ $$
 
 *Step 3: Augment with uniform draws.* Sample $\tau^{(i)} \sim \text{Uniform}(0,1)$ independently.
 
-*Step 4: Train quantile neural network.* Learn $H_\phi(S(y), \tau, d) \approx F_{U \mid d, y}^{-1}(\tau)$ by minimizing the pinball loss:
+*Step 4: Train quantile neural network.* Learn $H_\phi(S(y), \tau, d) \approx F_{U \mid d, y}^{-1}(\tau)$ by minimizing the pinball loss (@eq-check-loss):
 $$
 \mathcal{L}(\phi) = \frac{1}{NM} \sum_{i=1}^N \sum_{j=1}^M \rho_{\tau^{(i)}}\!\left(U^{(i)}_j - H_\phi(S(y^{(i)}), \tau^{(i)}, d_j)\right).
 $$
@@ -731,7 +701,7 @@ The one-parameter Wang distortion uses
 $$
 g_\lambda(p) = \Phi(\Phi^{-1}(p) + \lambda), \quad \lambda > 0,
 $$
-where $\lambda$ is the *market price of risk*. This is the special case of @eq-wang-distortion with $\lambda_1 = 1$ and $\lambda_0 = \lambda$. The premium becomes
+where $\lambda$ is the *market price of risk*. This is the special case of @eq-wang-distortion-meu with $\lambda_1 = 1$ and $\lambda_0 = \lambda$. The premium becomes
 $$
 \Pi_\lambda = \int_0^\infty \Phi(\Phi^{-1}(S_L(x)) + \lambda) \, dx.
 $$
@@ -865,7 +835,7 @@ Consider the normal-normal model from @sec-meu-wang with prior $\theta \sim N(2,
 
 (a) Compute the posterior parameters $\mu_*$ and $\sigma_*^2$ using the conjugate updating formulas.
 
-(b) Compute the Wang distortion parameters $\lambda_1$ and $\lambda_0$ from @eq-wang-params.
+(b) Compute the Wang distortion parameters $\lambda_1 = \alpha/\sigma_*$ and $\lambda_0 = (\mu_* - \mu_0)/\sigma_*$ (see @eq-wang-distortion).
 
 (c) Write Python code that: (i) plots the prior and posterior densities; (ii) plots the Wang distortion function $g(p) = \Phi(\lambda_1 \Phi^{-1}(p) + \lambda_0)$; (iii) verifies numerically that $g(1 - \Phi((\theta - \mu_0)/\alpha)) = 1 - \Phi((\theta - \mu_*)/\sigma_*)$ for a grid of $\theta$ values.
 

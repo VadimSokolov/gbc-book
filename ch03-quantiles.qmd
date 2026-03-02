@@ -526,17 +526,7 @@ The non-differentiability at $y_i = g_\theta(x_i, \tau)$ is a set of measure zer
 
 In PyTorch, the `torch.maximum` function used in our implementation handles the non-differentiability transparently. When we write `torch.maximum(tau * e, (tau - 1) * e)`, the autograd engine computes the gradient of whichever branch is active. At the tie point $e = 0$, PyTorch follows the convention of returning the gradient from the first argument (the $\tau \cdot e$ branch), which gives $\tau$---exactly our subgradient selection in @eq-check-subgrad-selection. We never need to handle this case manually. The pinball loss can be implemented in a single line of PyTorch, and backward passes through it are handled automatically without any special treatment of the kink.
 
-*Smooth approximation.* For applications where a smooth loss is preferred (e.g., when using second-order optimizers or when monitoring convergence), one can smooth the kink in the check loss using a Huber-style approximation:
-
-$$
-\tilde{\rho}_\tau(u; \kappa) = \begin{cases}
-\rho_\tau(u) & \text{if } |u| \geq \kappa, \\
-\frac{u^2}{2\kappa} \left(\tau - \frac{1}{2}\right) + \frac{u}{2} + \frac{\kappa}{4} & \text{if } |u| < \kappa,
-\end{cases}
-$$
-*Note.* The boundary conditions (continuity and gradient-matching at $|u| = \kappa$) should be verified for this formula; see @steinwart2011estimating for the rigorous derivation of smooth pinball loss approximations.
-
-where $\kappa > 0$ controls the smoothing width. As $\kappa \to 0$, this recovers the original check loss. The Huber variant replaces the V-shaped kink with a smooth parabolic segment of width $2\kappa$, ensuring that the gradient is continuous everywhere. This can improve convergence for second-order methods like L-BFGS that rely on gradient smoothness. However, the smoothing introduces a small bias: the minimizer of $E[\tilde{\rho}_\tau(Y - q; \kappa)]$ differs from $Q(\tau)$ by an amount that vanishes as $\kappa \to 0$. In our experience, the plain check loss with SGD works well for IQN training, and the Huber variant is rarely necessary.
+*Smooth approximation.* The kink at $u = 0$ can be smoothed using a Huber-style approximation that replaces the V-shaped corner with a quadratic bowl. We develop the **Huber quantile loss** formally in @sec-iqn-huber, where it plays a role in the IQN training pipeline.
 
 ```{python}
 #| eval: true
@@ -668,8 +658,6 @@ $$
 Q_Z(\tau) = g(Q_Y(\tau)) = \log(-\log(1 - \tau)).
 $$
 We can verify this directly. The CDF of $Z = \log(Y)$ is $F_Z(z) = P(\log(Y) \leq z) = P(Y \leq e^z) = 1 - e^{-e^z}$, which is the standard Gumbel distribution. Inverting, $Q_Z(\tau) = \log(-\log(1-\tau))$, confirming the compositional formula.
-
-Let us check numerically at a few values of $\tau$. At $\tau = 0.25$: $Q_Y(0.25) = -\log(0.75) \approx 0.2877$ and $Q_Z(0.25) = \log(0.2877) \approx -1.2459$. At $\tau = 0.50$: $Q_Y(0.50) = -\log(0.50) \approx 0.6931$ and $Q_Z(0.50) = \log(0.6931) \approx -0.3665$. At $\tau = 0.90$: $Q_Y(0.90) = -\log(0.10) \approx 2.3026$ and $Q_Z(0.90) = \log(2.3026) \approx 0.8340$.
 
 | $\tau$ | $Q_Y(\tau)$ | $\log(Q_Y(\tau))$ | $Q_Z(\tau)$ direct |
 |:------:|:-----------:|:-----------------:|:------------------:|

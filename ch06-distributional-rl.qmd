@@ -214,7 +214,7 @@ The $\tau$ input is encoded using the cosine embedding from @sec-iqn-cosine:
 $$
 \varphi(\tau) = \bigl(\cos(\pi \tau \cdot 0), \cos(\pi \tau \cdot 1), \ldots, \cos(\pi \tau \cdot (M-1))\bigr),
 $$
-and multiplicatively combined with the state representation, exactly as in the GBC architecture (@eq-iqn-architecture). The cosine embedding is not arbitrary --- it provides a smooth, high-dimensional representation of the scalar $\tau \in (0,1)$ that allows the network to represent complex, non-linear dependence of the quantile function on $\tau$. The intuition is similar to positional encodings in the Transformer architecture: by mapping a scalar to a high-dimensional vector of sines and cosines at different frequencies, we enable the network to learn functions that vary at multiple scales. Low-frequency components of $\varphi(\tau)$ capture the overall shape of the quantile function (e.g., whether it is increasing or decreasing), while high-frequency components capture fine-grained details such as sharp changes in the tails or multimodal structure. The embedding dimension $M$ controls the expressiveness: larger $M$ allows the network to represent more complex quantile functions, at the cost of more parameters. In practice, $M = 64$ is a common default.
+and multiplicatively combined with the state representation, exactly as in the GBC architecture (@eq-iqn-architecture). The cosine embedding and its frequency-based intuition are developed in @sec-iqn-cosine; the default $M = 64$ frequencies suffice for the problems in this book.
 
 The induced state-action value function is estimated by Monte Carlo:
 $$
@@ -253,7 +253,7 @@ C51 was published in 2017, QR-DQN in early 2018, and IQN in mid-2018. In the spa
 
 Let us see distributional RL in action on the two-state MDP from @exm-two-state. We implement *quantile temporal-difference learning*, the tabular precursor to QR-DQN, and watch the quantile function converge. The algorithm maintains a table of $m$ quantile estimates $\theta_1(x), \ldots, \theta_m(x)$ for each state $x$ and updates them using the pinball loss with TD targets. In the tabular setting, we use the plain pinball loss $\rho_\tau$. Deep RL implementations (QR-DQN, IQN) use the Huber quantile loss $\rho^H_\tau$ for smoother gradients near zero; the difference is only in the transition region around $\delta = 0$ and does not affect the fixed point.
 
-The update rule is simple and mirrors the scalar TD update, but with the pinball loss replacing the squared error. At each step, the agent observes a transition $(x, r, x')$, computes a target $y = r + \gamma \theta_j(x')$ for a randomly chosen target quantile $j$, and updates each quantile estimate $\theta_i(x)$ in the direction that reduces $\rho_{\tau_i}(y - \theta_i(x))$. The gradient of the pinball loss is $\tau_i$ if $y > \theta_i(x)$ (the target is above the estimate, so push up) and $\tau_i - 1$ if $y < \theta_i(x)$ (the target is below the estimate, so push down). For $\tau_i = 0.5$ (the median), this is symmetric: push up and push down with equal force. For $\tau_i = 0.9$, the push-up force is $0.9$ and the push-down force is only $-0.1$, so the estimate gravitates toward a high quantile. This asymmetric gradient is the entire mechanism by which different quantile levels learn to represent different parts of the distribution. The pinball loss was introduced in @sec-quantiles, and we saw there that minimizing $\mathbb{E}[\rho_\tau(Y - q)]$ over $q$ yields the $\tau$th quantile of $Y$. Here, the same loss is applied in a temporal-difference context: the "observed" value is not a direct sample from the target distribution but rather a one-step bootstrap estimate $r + \gamma \theta_j(x')$. The algorithm converges despite this bootstrapping --- a consequence of the Wasserstein contraction proved in @sec-rl-wasserstein.
+The update rule mirrors the scalar TD update, but with the pinball loss replacing the squared error. At each step, the agent observes a transition $(x, r, x')$, computes a target $y = r + \gamma \theta_j(x')$, and updates each quantile estimate $\theta_i(x)$ via the pinball loss gradient from @sec-quantiles. The asymmetric gradient --- pushing harder in the $\tau_i$ direction than the $(1-\tau_i)$ direction --- is what causes different quantile levels to converge to different parts of the distribution. The algorithm converges despite the bootstrapped targets, a consequence of the Wasserstein contraction proved in @sec-rl-wasserstein.
 
 ```{python}
 #| eval: false
@@ -508,11 +508,7 @@ Let us examine what changes and what stays the same when we cross this bridge.
 
 *What stays the same.* Everything else transfers directly. The cosine embedding $\varphi(\tau) = (\cos(\pi \tau i))_{i=0}^{M-1}$, the multiplicative merge $h = h_x \odot h_\tau$, the uniform $\tau$ sampling during training, and the ability to compute any risk measure by restricting the $\tau$ sampling range are all identical. The pinball loss $\rho_\tau(y - \hat{Q}(\tau \mid x))$ is the GBC counterpart of the Huber quantile loss in RL, and GBC can use either since the Huber variant provides slightly smoother gradients.
 
-The bridge becomes even more transparent through the noise outsourcing theorem (@sec-noise-outsourcing). The theorem guarantees that any conditional distribution $Y \mid X$ can be written as
-$$
-Y = G^*(U, X), \quad U \sim \text{Uniform}(0,1),
-$$
-where $G^*(\tau, x) = F_{Y|X=x}^{-1}(\tau)$ is the conditional quantile function. The IQN learns an approximation $\hat{G}(\tau, x; \theta) \approx G^*(\tau, x)$.
+The bridge becomes even more transparent through the noise outsourcing theorem (@sec-noise-outsourcing), which guarantees the existence of a quantile map $G^*(\tau, x) = F_{Y|X=x}^{-1}(\tau)$ for any conditional distribution.
 
 In distributional RL, the noise outsourcing representation applies to the return:
 $$
@@ -538,40 +534,13 @@ By removing the temporal and sequential structure of RL, GBC inherits the powerf
 
 ## Looking Back, Looking Forward {#sec-rl-summary}
 
-This chapter traced the intellectual journey from classical reinforcement learning to Generative Bayesian Computation.
+This chapter traced the path from classical RL to Generative Bayesian Computation.
 
-We began with the observation that classical RL learns a scalar value function $Q^\pi(x, a) = \mathbb{E}[Z^\pi(x,a)]$, discarding all distributional information about the random return $Z^\pi$.
-Distributional RL, introduced by @bellemare2017distributional, keeps the full distribution. The distributional Bellman equation (@eq-bellman-distributional) is a fixed-point equation in the space of probability distributions, and the Wasserstein contraction theorem (@eq-wasserstein-contraction) guarantees that iterating this equation converges to the true return-distribution function at a geometric rate determined by the discount factor $\gamma$.
+Classical RL learns a scalar value function, discarding distributional information. Distributional RL keeps the full return distribution, and the Wasserstein contraction theorem (@eq-wasserstein-contraction) guarantees convergence of the distributional Bellman operator at rate $\gamma$. The algorithmic progression from C51 (fixed support, learned probabilities) through QR-DQN (fixed quantile levels, learned locations) to IQN (continuous $\tau$ input, implicit quantile function) progressively freed the representation, with each step eliminating a source of approximation error (@fig-dist-rl-evolution, @tbl-dist-rl-evolution).
 
-The algorithmic evolution from C51 to QR-DQN to IQN (@fig-dist-rl-evolution) progressively freed the distributional representation.
-C51 fixes the support and learns probabilities.
-QR-DQN fixes the probabilities and learns quantile locations.
-IQN treats the quantile level $\tau$ as a continuous network input and learns the entire quantile function.
-Each step eliminates a source of approximation error and increases representational flexibility.
-The tabular quantile TD example in @sec-rl-tabular-qtd showed this learning process in miniature: the pinball loss, applied at different quantile levels, drives each estimate toward the corresponding quantile of the true return distribution.
+The full return distribution enables risk-sensitive control via CVaR and other distortion risk measures (@sec-rl-cvar), connecting distributional RL to Yaari's dual theory and the MEU framework of @sec-meu.
 
-The full return distribution enables risk-sensitive control via CVaR and other distortion risk measures (@sec-rl-cvar), computable from the quantile function by simply changing the sampling range of $\tau$.
-This connects distributional RL to the economics of decision-making under uncertainty (Yaari's dual theory) and to the maximum expected utility framework developed in @sec-meu.
-The same trained network supports all risk attitudes: we learn once and decide many times.
-
-Finally, the bridge to GBC (@sec-rl-bridge) reveals that the IQN architecture --- cosine embedding, multiplicative merge, pinball loss --- transfers directly from RL to statistical inference.
-GBC replaces the bootstrapped Bellman target with the observed response $y$, turning an unstable RL training loop into stable supervised learning.
-The noise outsourcing theorem provides the theoretical justification: any conditional distribution can be represented as a quantile function, and the pinball loss is the proper scoring rule for learning it.
-The lineage from Parzen to Rubin to distributional RL to GBC makes this connection natural in hindsight, even though it was not anticipated when IQN was first published.
-
-In the chapters that follow, we deploy this framework for surrogate modeling (@sec-surrogates), Bayesian inference (@sec-bayesian-inference), prediction (@sec-prediction), and causal inference (@sec-causal). The IQN architecture that learned to play Atari games will learn posterior distributions, predictive distributions, and counterfactual distributions --- all with the same loss function and the same network design.
-
-The reader should take away three main ideas.
-
-First, learning the full distribution of returns --- rather than just the mean --- leads to better performance, richer representations, and risk-sensitive decision-making.
-The distributional perspective is strictly more informative than the scalar perspective, and the extra information comes at moderate computational cost: instead of outputting one number per state-action pair, the network outputs a function of $\tau$ per state-action pair.
-
-Second, the Wasserstein distance is the natural metric for comparing distributions in this context, and its connection to quantile functions is what makes quantile regression the right computational tool.
-The pinball loss is not an arbitrary choice --- it is the sample-based estimator that minimizes the Wasserstein distance between the predicted and true quantile functions, and the Wasserstein contraction of the distributional Bellman operator ensures convergence.
-
-Third, the IQN architecture (cosine embedding, multiplicative merge, pinball loss) that emerged from the distributional RL community is exactly the architecture that GBC needs.
-The transition from RL to statistics is a matter of removing the Bellman recursion and replacing bootstrapped targets with observed data.
-The chapters that follow demonstrate how far this idea can go.
+The bridge to GBC (@sec-rl-bridge, @tbl-rl-gbc-bridge) is direct: replace the bootstrapped Bellman target with the observed response $y$, turning an unstable RL training loop into standard supervised learning. The IQN architecture transfers intact. The chapters that follow deploy it for surrogates (@sec-surrogates), Bayesian inference (@sec-bayesian-inference), prediction (@sec-prediction), and causal inference (@sec-causal).
 
 
 ## Exercises {#sec-rl-exercises}

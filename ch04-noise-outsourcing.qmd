@@ -132,7 +132,7 @@ The left panel of @fig-no-normal-demo shows the conditional quantile curves $G^*
 This example is deliberately simple: we know the closed-form quantile function because the conditional distribution is Gaussian. In practice, we will not know $G^*$ analytically --- we will learn it from data using a neural network. But the example serves two purposes. First, it makes the noise outsourcing theorem tangible: the abstract representation $Y = G^*(U, X)$ becomes a concrete computation with a picture we can look at. Second, it establishes a ground truth against which we can test the neural network approximation in @sec-iqn: if the IQN learns the correct quantile function for a problem where we know the answer, we can trust it on problems where we do not.
 
 
-## $Y = G^*(U, X)$: Conditional Quantile as Transport Map {#sec-no-transport}
+## Conditional Quantile as Transport Map {#sec-no-transport}
 
 The function $G^* : [0,1] \times \mathcal{X} \to \mathcal{Y}$ has a dual interpretation, depending on which argument we hold fixed.
 

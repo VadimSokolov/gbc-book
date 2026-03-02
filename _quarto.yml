@@ -43,6 +43,7 @@ bibliography: references.bib
 filters:
   - filters/mermaid-width.lua
   - filters/fold-long-code.lua
+  - filters/chapter-shortref.lua
 
 format:
   html:

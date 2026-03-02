@@ -244,7 +244,7 @@ The GBC framework we develop in the next section is explicitly Bayesian: it prod
 
 ## Generative Bayesian Prediction via Quantile Transport {#sec-pred-generative}
 
-We now develop the generative approach to Bayesian prediction. We bypass the density-based integral in @eq-pred-bayes-predictive and learn the predictive quantile function directly. The theoretical foundation rests on two pillars: the de Finetti--Ressel representation theorem, which guarantees that an implicit prior exists, and the noise outsourcing theorem (@sec-noise-outsourcing), which provides the quantile transport map.
+We now develop the generative approach to Bayesian prediction. We bypass the density-based integral in @eq-pred-bayes-predictive and learn the predictive quantile function directly. The theoretical foundation rests on two pillars: the de Finetti--Ressel representation theorem, which guarantees that an implicit prior exists, and the noise outsourcing theorem, which provides the quantile transport map.
 
 ### Exchangeability and the de Finetti--Ressel Representation {#sec-pred-definetti}
 
@@ -292,7 +292,7 @@ where $Q$ is the conditional quantile function of $Y_{n+1}$ given the covariate 
 
 The method is *likelihood-free* and *prior-free* in the operational sense: we never specify $p(z|\theta)$ or $\pi(\theta)$. All we need is the ability to *simulate* sequences $(Z_1, \ldots, Z_n, Z_{n+1})$ from a forward generative model, from which we extract training tuples $(x_{n+1}, S(Z_{1:n}), Y_{n+1})$. The de Finetti--Ressel theory guarantees that an implicit prior and likelihood *exist* and could in principle be recovered from the learned quantile map, but we need not do so.
 
-The generative Bayesian prediction algorithm proceeds as follows:
+The generative Bayesian prediction algorithm follows the GBC template (Algorithm 10.2 in @sec-bi-algorithm), adapted for the predictive setting:
 
 1. *Simulate.* Generate $m$ exchangeable sequences $(Z_1^{(j)}, \ldots, Z_n^{(j)}, Z_{n+1}^{(j)})$ for $j = 1, \ldots, m$ from a forward model. Extract training tuples $(x_{n+1}^{(j)}, s^{(j)}, y_{n+1}^{(j)})$ where $s^{(j)} = S(Z_{1:n}^{(j)})$.
 
@@ -302,7 +302,7 @@ The generative Bayesian prediction algorithm proceeds as follows:
 $$
 \hat{Q} = \arg\min_{Q \in \mathcal{Q}} \frac{1}{m} \sum_{j=1}^{m} \mathbb{E}_\tau\!\left[\rho_\tau\!\left(y_{n+1}^{(j)} - Q(\tau, s^{(j)})\right)\right],
 $$
-where $\rho_\tau(u) = u(\tau - \mathbf{1}(u < 0))$ is the pinball loss and $\mathcal{Q}$ is the class of quantile neural networks.
+where $\rho_\tau$ is the pinball loss (@eq-check-loss) and $\mathcal{Q}$ is the class of quantile neural networks.
 
 4. *Predict.* At test time, given observed data $z_{\text{obs}} = (z_1, \ldots, z_n)$ and a new covariate $x_{n+1}$:
    - Compute the summary: $s_{\text{obs}} = S(z_{\text{obs}})$.
@@ -315,21 +315,9 @@ The algorithm has a clear division of labor between offline and online computati
 
 ### Normal-Normal Learning and Wang Distortions {#sec-pred-wang}
 
-To make the framework concrete, consider the normal-normal conjugate model. Let $(y_1, \ldots, y_n \mid \theta) \sim N(\theta, \sigma^2)$ with prior $\theta \sim N(\mu_0, \alpha^2)$, where $\sigma^2$ is known. The predictive distribution is
-$$
-(y_{n+1} \mid \bar{y}) \sim N\!\left(\mu_*, \; \sigma^2 + \sigma_*^2\right),
-$$
-where $\mu_* = (\sigma^2 \mu_0 + n\alpha^2 \bar{y})/(\sigma^2 + n\alpha^2)$ and $\sigma_*^2 = \alpha^2 \sigma^2 / (\sigma^2 + n\alpha^2)$, and the sufficient statistic is $S(y) = \bar{y}$.
+To make the framework concrete, consider the normal-normal conjugate model from @sec-bi-normal. The prior-to-posterior update is a Wang distortion (@eq-wang-distortion): the posterior CDF is obtained by composing the prior CDF with a data-dependent distortion function $g$. In the predictive setting, the same distortion applies, but the predictive variance includes an additional $\sigma^2$ term (the observation noise), so the predictive distribution is $N(\mu_*, \sigma^2 + \sigma_*^2)$ rather than $N(\mu_*, \sigma_*^2)$.
 
-The posterior CDF relates to the prior CDF via a *Wang distortion function* [@wang2000class]:
-$$
-1 - \Phi(\theta; \mu_*, \sigma_*) = g\!\big(1 - \Phi(\theta; \mu_0, \alpha)\big),
-$$
-where
-$$
-g(p) = \Phi\!\left(\lambda_1 \Phi^{-1}(p) + \lambda\right), \quad \lambda_1 = \frac{\alpha}{\sigma_*}, \quad \lambda = \frac{\alpha \lambda_1 (s - n\mu_0)}{\sigma^2 + n\alpha^2}.
-$$
-This is a composition: the posterior quantile is obtained by applying a learned distortion $g$ to the prior quantile. In the GBC framework, the neural network discovers this distortion from simulated data --- without ever being told the parametric form.
+The GBC framework learns this distortion from simulated data --- without ever being told the parametric form.
 
 ```{python}
 #| eval: true
