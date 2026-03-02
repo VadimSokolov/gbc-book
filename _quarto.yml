@@ -89,7 +89,6 @@ execute:
 jupyter: python3
 
 crossref:
-  chapters: true
   eq-prefix: "Eq."
   fig-prefix: "Figure"
   tbl-prefix: "Table"

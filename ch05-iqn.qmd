@@ -7,16 +7,16 @@ $$
 \hat{Q}(\tau \mid x) \approx F^{-1}_{Y \mid X=x}(\tau).
 $$ {#eq-iqn-basic}
 
-What makes IQN "implicit" is that $\tau$ is treated as a continuous input rather than a fixed grid. We do not pre-specify which quantiles to learn --- instead, we sample $\tau$ uniformly during training and the network learns the entire quantile function simultaneously. This is a fundamental departure from classical quantile regression [@koenker2005quantile], where one fits a separate model for each quantile level.
+What makes IQN "implicit" is that $\tau$ is treated as a continuous input rather than a fixed grid. We do not pre-specify which quantiles to learn --- instead, we sample $\tau$ uniformly during training and the network learns the entire quantile function simultaneously. This is a departure from classical quantile regression [@koenker2005quantile], where one fits a separate model for each quantile level.
 
 The chapter is organized as follows. We begin with the cosine embedding that transforms the scalar $\tau$ into a rich feature vector (@sec-iqn-cosine). We then describe the full architecture and the three strategies for merging $\tau$ with $x$ (@sec-iqn-architecture). The composite loss function follows (@sec-iqn-loss), including a comparison with the Huber quantile loss (@sec-iqn-huber). Training details appear in @sec-iqn-training, followed by diagnostics for validating a trained IQN (@sec-iqn-diagnostics) and a hyperparameter sensitivity study (@sec-iqn-hyperparams). We present two worked examples --- the motorcycle crash dataset (@sec-iqn-motorcycle) and the Friedman function with heteroscedastic noise (@sec-iqn-friedman) --- before closing with exercises (@sec-iqn-exercises).
 
 
 ## Cosine Embedding of $\tau$ {#sec-iqn-cosine}
 
-The key innovation of the IQN is how it encodes the quantile level $\tau$. A naive approach would concatenate $\tau$ as a scalar feature alongside $x$. This works but is inefficient: the network must learn the entire dependence of $\hat{Q}$ on $\tau$ from a one-dimensional input, which is a heavy burden on a few initial weights.
+The IQN encodes the quantile level $\tau$ in a specific way. A naive approach would concatenate $\tau$ as a scalar feature alongside $x$. This works but is inefficient: the network must learn the entire dependence of $\hat{Q}$ on $\tau$ from a one-dimensional input, which is a heavy burden on a few initial weights.
 
-A much better approach is to lift $\tau$ into a higher-dimensional space using a **cosine embedding**. The idea comes from Fourier analysis: smooth functions on $[0,1]$ are well-approximated by cosine series. Since the quantile function $F^{-1}(\tau \mid x)$ is typically smooth in $\tau$ (for a fixed $x$), a cosine basis is a natural representation.
+A better approach is to lift $\tau$ into a higher-dimensional space using a **cosine embedding**. The idea comes from Fourier analysis: smooth functions on $[0,1]$ are well-approximated by cosine series. Since the quantile function $F^{-1}(\tau \mid x)$ is typically smooth in $\tau$ (for a fixed $x$), a cosine basis is a natural representation.
 
 ::: {.callout-tip appearance="simple" title="Definition 5.1: Cosine Embedding"}
 For $\tau \in (0,1)$ and embedding dimension $M$, the **cosine embedding** is
@@ -87,16 +87,16 @@ plt.tight_layout()
 plt.show()
 ```
 
-An alternative is a *linear embedding*, where $\tau$ is simply passed through a linear layer: $\phi_{\text{lin}}(\tau) = \text{ReLU}(w \cdot \tau + b)$. This works for simple problems but struggles with non-monotone or rapidly varying quantile functions. The cosine embedding provides a much richer starting representation, allowing the network to converge faster and generalize better. We compare the two in @sec-iqn-exercises.
+An alternative is a *linear embedding*, where $\tau$ is simply passed through a linear layer: $\phi_{\text{lin}}(\tau) = \text{ReLU}(w \cdot \tau + b)$. This works for simple problems but struggles with non-monotone or rapidly varying quantile functions. The cosine embedding provides a richer starting representation, allowing the network to converge faster and generalize better. We compare the two in @sec-iqn-exercises.
 
 
 ## Architecture {#sec-iqn-architecture}
 
-With the cosine embedding in hand, we can describe the full IQN architecture. The network takes two inputs --- the covariate $x \in \mathbb{R}^p$ and the quantile level $\tau \in (0,1)$ --- and outputs a scalar estimate $\hat{Q}(\tau \mid x) \in \mathbb{R}$.
+We can now describe the full IQN architecture. The network takes two inputs --- the covariate $x \in \mathbb{R}^p$ and the quantile level $\tau \in (0,1)$ --- and outputs a scalar estimate $\hat{Q}(\tau \mid x) \in \mathbb{R}$.
 
 The architecture has four stages. A covariate encoder MLP maps $x$ to a hidden representation $h_x \in \mathbb{R}^d$, while the cosine embedding maps $\tau$ to $h_\tau \in \mathbb{R}^d$ of the same dimension. These are merged via the element-wise product $h = h_x \odot h_\tau$, and further MLP layers in the output head then map $h$ to the scalar output.
 
-The multiplicative interaction is the architectural key. It lets $\tau$ *modulate* the feature representation of $x$, rather than merely being concatenated. Intuitively, the covariate encoder learns which features of $x$ are relevant, and the quantile encoder gates these features depending on which part of the distribution we are querying. This is far more expressive than additive combination.
+The multiplicative interaction lets $\tau$ *modulate* the feature representation of $x$, rather than merely being concatenated. The covariate encoder learns which features of $x$ are relevant, and the quantile encoder gates these features depending on which part of the distribution we are querying. This is far more expressive than additive combination.
 
 ::: {.callout-tip appearance="simple" title="Definition 5.2: IQN Architecture"}
 The IQN maps $(x, \tau)$ to $\hat{Q}(\tau \mid x)$ via
@@ -194,7 +194,7 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Total parameters: {n_params:,}")
 ```
 
-A few remarks on the architecture are worth making. We use $d = 256$ throughout: for very low-dimensional problems ($p \leq 3$), $d = 128$ suffices, while high-dimensional inputs may benefit from $d = 512$. Three hidden layers---one in each encoder plus one in the output head---is our default, with deeper networks helping for complex functions at the cost of more training epochs. The activation choices are ReLU in the encoders, Tanh in the penultimate layer (to bound intermediate representations), and no activation on the final output since quantiles are unbounded. For $p = 2$, the model has roughly 135K parameters---modest by modern standards but sufficient for the problems in this book.
+We use $d = 256$ throughout: for very low-dimensional problems ($p \leq 3$), $d = 128$ suffices, while high-dimensional inputs may benefit from $d = 512$. Three hidden layers---one in each encoder plus one in the output head---is our default, with deeper networks helping for complex functions at the cost of more training epochs. The activation choices are ReLU in the encoders, Tanh in the penultimate layer (to bound intermediate representations), and no activation on the final output since quantiles are unbounded. For $p = 2$, the model has roughly 135K parameters---modest by modern standards but sufficient for the problems in this book.
 
 
 ## The Three-Term Loss {#sec-iqn-loss}
@@ -205,14 +205,12 @@ $$
 $$ {#eq-pinball}
 where $u = y - \hat{Q}(\tau \mid x)$ is the residual.
 
-Before stating the connection to the CRPS, let us recall why a proper scoring rule matters. In any probabilistic forecasting problem, we want a loss function that is *strictly proper*: it is uniquely minimized when the predicted distribution equals the true conditional distribution. A loss that is not strictly proper can be "gamed" --- a miscalibrated forecast may achieve a lower loss than the truth. The CRPS is one of the most widely used strictly proper scoring rules for real-valued forecasts, and the following result ties it directly to the pinball loss that the IQN minimizes.
-
-Minimizing the expected pinball loss over $\tau$ yields the CRPS --- the continuous ranked probability score --- which is a strictly proper scoring rule [@gneiting2007strictly]:
+A proper scoring rule is a loss function that is uniquely minimized when the predicted distribution equals the true conditional distribution. A loss that is not strictly proper can be "gamed" --- a miscalibrated forecast may achieve a lower loss than the truth. Minimizing the expected pinball loss over $\tau$ yields the CRPS --- the continuous ranked probability score --- which is a strictly proper scoring rule [@gneiting2007strictly]:
 $$
 \text{CRPS}(F, y) = 2\int_0^1 \rho_\tau\bigl(y - F^{-1}(\tau)\bigr) \, d\tau.
 $$ {#eq-crps-integral}
 
-The practical implication is immediate: by sampling $\tau$ uniformly during training and minimizing the pinball loss, the IQN is implicitly minimizing the CRPS. This means the IQN's training objective is a strictly proper scoring rule, and the network has no incentive to produce miscalibrated predictions. The convergence is not instantaneous --- finite training introduces estimation error --- but the direction is correct.
+By sampling $\tau$ uniformly during training and minimizing the pinball loss, the IQN is implicitly minimizing the CRPS. This means the IQN's training objective is a strictly proper scoring rule, and the network has no incentive to produce miscalibrated predictions. The convergence is not instantaneous --- finite training introduces estimation error --- but the direction is correct.
 
 In the GBC framework, we use a *composite loss* that combines three terms.
 

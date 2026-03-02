@@ -2,7 +2,7 @@
 
 > "*Prediction is very difficult, especially about the future.*" -- attributed to Niels Bohr
 
-The previous chapter developed GBC as a tool for Bayesian *inference* --- estimating parameters $\theta$ from data. We now turn to the more fundamental problem of *prediction*: given observations $Z_1, \ldots, Z_n$, characterize the distribution of a future observation $Y_{n+1}$. Prediction is arguably the primary goal of statistics. As @efron2020prediction observed, most of the practical success of modern machine learning --- random forests, gradient boosting, deep nets --- is driven by prediction, not parameter estimation.
+The previous chapter developed GBC as a tool for Bayesian *inference* --- estimating parameters $\theta$ from data. We now address *prediction*: given observations $Z_1, \ldots, Z_n$, characterize the distribution of a future observation $Y_{n+1}$. Prediction is arguably the primary goal of statistics. As @efron2020prediction observed, most of the practical success of modern machine learning --- random forests, gradient boosting, deep nets --- is driven by prediction, not parameter estimation.
 
 The standard Bayesian predictive distribution integrates over the posterior:
 $$
@@ -31,7 +31,7 @@ p(y_{n+1} \mid x_{n+1}, Z_{1:n}) = \int p(y_{n+1} \mid \theta, x_{n+1}) \, \pi(\
 $$
 The resulting $1-\alpha$ credible set has *conditional* coverage: given the data $Z_{1:n}$, the coverage holds pointwise for each realization of the training set.
 
-These two paradigms look superficially similar --- both produce prediction intervals. But they differ in deep ways, as we shall see.
+These two paradigms look superficially similar --- both produce prediction intervals --- but they differ in important structural ways.
 
 *Prediction vs. estimation.* @efron2020prediction gives a clean illustration of the distinction. Consider the normal model $(y_1, \ldots, y_n \mid \theta) \sim N(\theta, 1)$. For estimating $\theta$, the sample mean $\bar{y}$ is 57\% more efficient than the sample median $\tilde{y}$:
 $$
@@ -72,7 +72,7 @@ $$ {#eq-pred-cp-coverage}
 
 *Proof sketch.* The key insight is that the calibration scores $(R_{m+1}, \ldots, R_n)$ and the test score $R_{n+1} = |Y_{n+1} - \hat{\mu}(X_{n+1})|$ are exchangeable (since the model $\hat{\mu}$ is fixed, having been trained on $\mathcal{D}_{\text{tr}}$ only). Among $n_{\text{cal}} + 1$ exchangeable random variables, the probability that any one of them exceeds the $(1-\alpha)$-quantile of the others is at most $\alpha$. This is a finite-sample result requiring no assumptions on $P$ beyond exchangeability. $\square$
 
-*Strengths.* The guarantee in @eq-pred-cp-coverage holds for *any* model $\hat{\mu}$ --- even a terrible one --- and for *any* distribution $P$. It is finite-sample (not asymptotic), and it requires no parametric assumptions. This is remarkable: we get valid uncertainty quantification regardless of model misspecification.
+*Strengths.* The guarantee in @eq-pred-cp-coverage holds for *any* model $\hat{\mu}$ --- even a terrible one --- and for *any* distribution $P$. It is finite-sample (not asymptotic), and it requires no parametric assumptions: we get valid uncertainty quantification regardless of model misspecification.
 
 *Limitations.* The coverage is *marginal*, averaged over both the calibration data and the test point. It says nothing about coverage conditional on a particular value of $X_{n+1}$ or a particular realization of the training data. The prediction band in @eq-pred-cp-set has constant width $2\hat{q}$ regardless of $x$ --- it does not adapt to heteroscedasticity. (We discuss the adaptive variant in the conformalized quantile regression procedure below.)
 
@@ -173,9 +173,9 @@ In @fig-pred-conformal, the split conformal band (blue) has constant width every
 
 ## Conformal $\neq$ Bayes: Four Separations {#sec-pred-cp-not-bayes}
 
-Is conformal prediction Bayesian? The coverage guarantee @eq-pred-cp-coverage *looks* like a probability statement about $Y_{n+1}$, which might suggest a Bayesian interpretation. The answer is no --- and the disagreement runs deep. We now develop four structural separations showing that conformal prediction belongs to the fiducial tradition of Fisher, Dempster, and @hill1968posterior, not to the Bayesian tradition.
+Is conformal prediction Bayesian? The coverage guarantee @eq-pred-cp-coverage *looks* like a probability statement about $Y_{n+1}$, which might suggest a Bayesian interpretation. The answer is no. We now develop four structural separations showing that conformal prediction belongs to the fiducial tradition of Fisher, Dempster, and @hill1968posterior, not to the Bayesian tradition.
 
-Before diving into the formal results, it is worth pausing to appreciate why these separations matter for practice. Many applied researchers use conformal prediction and Bayesian prediction interchangeably, reasoning that both produce prediction intervals and both invoke exchangeability. The four results below show that this conflation is a mistake. The two frameworks answer fundamentally different questions --- conformal prediction asks "will my coverage be correct on average over future data?" while Bayesian prediction asks "what do I believe about this particular future observation given everything I have seen?" Understanding which question you are answering is essential for interpreting your prediction intervals and for deciding when to use which approach.
+Many applied researchers use conformal prediction and Bayesian prediction interchangeably, reasoning that both produce prediction intervals and both invoke exchangeability. The four results below show that this conflation is a mistake. The two frameworks answer fundamentally different questions --- conformal prediction asks "will my coverage be correct on average over future data?" while Bayesian prediction asks "what do I believe about this particular future observation given everything I have seen?" Understanding which question you are answering is essential for interpreting your prediction intervals and for deciding when to use which approach.
 
 To understand the fiducial roots of conformal prediction, we begin with the Hill--Dempster $A_{(n)}$ rule [@hill1968posterior]. Given observations $X_{(1)} < X_{(2)} < \cdots < X_{(n)}$ (the order statistics), the $A_{(n)}$ rule assigns predictive probability
 $$
@@ -211,7 +211,7 @@ P(Y_{n+1} \in C(X_{n+1})) \geq 1 - \alpha.
 $$
 This averages over $X_{n+1}$. The conditional coverage $P(Y_{n+1} \in C(x) \mid X_{n+1} = x)$ can be much lower than $1 - \alpha$ for some values of $x$ and much higher for others. The marginal guarantee hides conditional miscoverage. Any attempt to interpret conformal's rank calibration as a finitely additive probability (as in the $A_{(n)}$ framework) produces a nonconglomerable measure --- one that admits a Dutch book (sure loss) in the decision-theoretic sense of de Finetti.
 
-The practical consequence of Separation 2 is striking. Suppose we are predicting hospital readmission risk. Conformal prediction might achieve 90% marginal coverage across all patients, yet have only 70% coverage for elderly patients with multiple comorbidities and 98% coverage for healthy young adults. The marginal guarantee tells us nothing about coverage within any subgroup. A Bayesian predictive distribution, by contrast, provides valid conditional coverage for each patient profile (assuming the model is correctly specified). When decisions are made at the individual level --- which patient to monitor, which loan to approve --- the conditional guarantee is what matters, and conformal prediction cannot provide it without additional assumptions.
+The practical consequence of Separation 2 is immediate. Suppose we are predicting hospital readmission risk. Conformal prediction might achieve 90% marginal coverage across all patients, yet have only 70% coverage for elderly patients with multiple comorbidities and 98% coverage for healthy young adults. The marginal guarantee tells us nothing about coverage within any subgroup. A Bayesian predictive distribution, by contrast, provides valid conditional coverage for each patient profile (assuming the model is correctly specified). When decisions are made at the individual level --- which patient to monitor, which loan to approve --- the conditional guarantee is what matters, and conformal prediction cannot provide it without additional assumptions.
 
 **Separation 3: No $\sigma$-additive extension.** A natural question is whether we can "fix" the conformal prediction framework by finding a proper (countably additive) probability measure on $\mathbb{R}^\infty$ that reproduces the $A_{(n)}$ rank calibration at every sample size.
 
@@ -223,9 +223,7 @@ There exists no countably additive exchangeable probability measure on $\mathbb{
 
 *Proof sketch.* By de Finetti's theorem, any $\sigma$-additive exchangeable measure on $\mathbb{R}^\infty$ is a mixture of i.i.d. sequences. For i.i.d. continuous distributions, the conditional rank distribution of $Y_{n+1}$ given $Y_{n+1} = y$ is not uniform but depends on $y$. Taking the mixture preserves this non-uniformity at the conditional level. The $A_{(n)}$ rule demands exact uniformity even conditionally, which is incompatible with the mixture structure. $\square$
 
-This is a deep obstruction. It says that the conformal calibration property cannot arise from any Bayesian model --- not from a well-chosen prior, not from a hierarchical model, not from a nonparametric Bayesian procedure. The calibration is a property of the *procedure*, not of any *belief*.
-
-Proposition 11.1 tells us something philosophically important: conformal prediction is not "Bayesian prediction with a clever prior." There is no prior --- no matter how exotic, no matter how carefully constructed --- that would produce the exact rank-uniform calibration that conformal prediction achieves. The two frameworks are built on fundamentally different mathematical foundations. Conformal prediction rests on finite additivity and the combinatorics of exchangeable ranks. Bayesian prediction rests on $\sigma$-additivity and the de Finetti mixture representation. These are genuinely different probability theories, and neither subsumes the other.
+This says that the conformal calibration property cannot arise from any Bayesian model --- not from a well-chosen prior, not from a hierarchical model, not from a nonparametric Bayesian procedure. The calibration is a property of the *procedure*, not of any *belief*. There is no prior that would produce the exact rank-uniform calibration that conformal prediction achieves. Conformal prediction rests on finite additivity and the combinatorics of exchangeable ranks; Bayesian prediction rests on $\sigma$-additivity and the de Finetti mixture representation. These are genuinely different probability theories, and neither subsumes the other.
 
 **Separation 4: Meagre intersection.** The previous separations show specific ways in which CP and Bayes differ. The fourth separation is topological and says that the two frameworks agree only on a negligible set.
 
@@ -233,7 +231,7 @@ Consider the space of all predictive kernels $K : \mathcal{X}^n \times \mathcal{
 
 Under appropriate topologies (e.g., total variation on the predictive measures, uniform convergence over $\mathcal{X}$), the intersection $\mathcal{B} \cap \mathcal{C}$ is *Baire meagre* (a countable union of nowhere-dense sets). Topologically, this means the set of predictive distributions that are *both* Bayesian and conformally calibrated is negligible --- a zero-measure-like concept in a topological setting.
 
-The meagre intersection result is the strongest of the four separations because it is not just an existence claim ("there exist cases where they differ") but a genericity claim ("they differ almost everywhere"). If we were to pick a predictive distribution at random from the space of all reasonable predictive rules, the probability of landing on one that is simultaneously Bayesian and conformally calibrated would be zero. The few cases where they agree --- such as the uniform distribution on a finite set --- are mathematical curiosities, not representative of real prediction problems.
+The meagre intersection result is the strongest of the four separations because it is a genericity claim, not just an existence claim: the two frameworks disagree almost everywhere. The few cases where they agree --- such as the uniform distribution on a finite set --- are mathematical curiosities, not representative of real prediction problems.
 
 *Practical implication.* If you want marginal coverage, use conformal prediction. If you want a coherent belief state for sequential updating, decision-making, and conditional inference, use Bayesian prediction. Trying to get both from a single framework is generically impossible.
 
@@ -241,12 +239,12 @@ The four separations place conformal prediction squarely in the Fisher--Dempster
 
 @hannig2016generalized showed that generalized fiducial inference carries an *implicit prior* --- an empirical Jeffreys prior based on observed information. Specifically, if there exists a reparametrization $\phi = u(\theta)$ such that the normalized likelihood factors as a location family, the quantity $|du/d\theta|$ plays the role of this implicit prior. But this implicit prior is finitely additive, not $\sigma$-additive, and the resulting predictive distribution inherits the nonconglomerability of Separation 2.
 
-The GBC framework we develop in the next section is explicitly Bayesian: it produces $\sigma$-additive predictive distributions that are conglomerable, extensional, and composable for sequential updating. This does not mean that conformal prediction is useless --- far from it. As we saw in @sec-pred-cqr, conformal calibration can be applied as a post-processing step on top of any prediction method, including GBC. The point is that conformal calibration provides a *frequentist safety net* (marginal coverage) but does not, by itself, give you a Bayesian predictive distribution. The two are complementary tools: GBC provides the probabilistic model, and conformal calibration provides the distribution-free coverage guarantee. Using them together gives us the best of both worlds.
+The GBC framework we develop in the next section is explicitly Bayesian: it produces $\sigma$-additive predictive distributions that are conglomerable, extensional, and composable for sequential updating. This does not mean that conformal prediction is useless --- far from it. As we saw in @sec-pred-cqr, conformal calibration can be applied as a post-processing step on top of any prediction method, including GBC. Conformal calibration provides a *frequentist safety net* (marginal coverage) but does not, by itself, give you a Bayesian predictive distribution. The two are complementary tools: GBC provides the probabilistic model, and conformal calibration provides the distribution-free coverage guarantee.
 
 
 ## Generative Bayesian Prediction via Quantile Transport {#sec-pred-generative}
 
-We now develop the generative approach to Bayesian prediction. The key idea is to bypass the density-based integral in @eq-pred-bayes-predictive and learn the predictive quantile function directly. The theoretical foundation rests on two pillars: the de Finetti--Ressel representation theorem, which guarantees that an implicit prior exists, and the noise outsourcing theorem (@sec-noise-outsourcing), which provides the quantile transport map.
+We now develop the generative approach to Bayesian prediction. We bypass the density-based integral in @eq-pred-bayes-predictive and learn the predictive quantile function directly. The theoretical foundation rests on two pillars: the de Finetti--Ressel representation theorem, which guarantees that an implicit prior exists, and the noise outsourcing theorem (@sec-noise-outsourcing), which provides the quantile transport map.
 
 ### Exchangeability and the de Finetti--Ressel Representation {#sec-pred-definetti}
 
@@ -258,7 +256,7 @@ This is a weaker assumption than independence --- exchangeable random variables 
 
 Why is exchangeability the right assumption for prediction? Consider predicting tomorrow's stock return given the last $n$ returns. We believe that the returns are generated by some common mechanism (the market), but we do not know what that mechanism is. If we had no additional information (such as time trends or regime changes), we would have no reason to distinguish the first return from the last. Exchangeability formalizes this symmetry. It says that all the information in the data relevant to prediction is captured by *symmetric functions* of the observations --- counts, order statistics, sample moments --- rather than by which observation came first.
 
-By de Finetti's representation theorem, there exists a random distribution $\tilde{F}$ such that, conditionally on $\tilde{F}$, the $Z_i$ are i.i.d. from $\tilde{F}$. The distribution of $\tilde{F}$ is the *implicit prior* --- we can act as if there exists a parameter $\theta$, a likelihood $p(z|\theta)$, and a prior $\pi(\theta)$. This is the deep connection between exchangeability and Bayesian inference: you do not need to start with a prior. If you believe your data is exchangeable, de Finetti's theorem tells you that a prior *must exist*, whether or not you can write it down. The prior is not a subjective choice imposed from outside; it is a mathematical consequence of the symmetry assumption.
+By de Finetti's representation theorem, there exists a random distribution $\tilde{F}$ such that, conditionally on $\tilde{F}$, the $Z_i$ are i.i.d. from $\tilde{F}$. The distribution of $\tilde{F}$ is the *implicit prior* --- we can act as if there exists a parameter $\theta$, a likelihood $p(z|\theta)$, and a prior $\pi(\theta)$. This is the connection between exchangeability and Bayesian inference: you do not need to start with a prior. If you believe your data is exchangeable, de Finetti's theorem tells you that a prior *must exist*, whether or not you can write it down. The prior is not a subjective choice imposed from outside; it is a mathematical consequence of the symmetry assumption.
 
 The connection to prediction is immediate. For a Bayesian, the predictive distribution of $Z_{n+1}$ given $Z_1, \ldots, Z_n$ is obtained by integrating over the mixing measure: $p(Z_{n+1} \mid Z_{1:n}) = \int p(Z_{n+1} \mid \tilde{F}) \, d\Pi(\tilde{F} \mid Z_{1:n})$, where $\Pi(\cdot \mid Z_{1:n})$ is the posterior over mixing measures. The crucial point is that this predictive distribution depends on the data only through the *sufficient statistic* for the mixing measure. In the parametric case, this is the classical sufficient statistic; in the nonparametric case, it is the empirical distribution itself.
 
@@ -268,19 +266,19 @@ p(Y_{n+1} \mid x_{n+1}, Z_1, \ldots, Z_n) = p(Y_{n+1} \mid x_{n+1}, S(Z_1, \ldot
 $$ {#eq-pred-suff}
 where $S(Z_1, \ldots, Z_n)$ is a predictive sufficient statistic that reduces the dimensionality of the conditioning set from $n$ observations to a fixed-dimensional summary.
 
-@ressel1985finettitype proved a remarkable refinement of de Finetti's theorem. If the joint distribution of an exchangeable sequence factorizes as
+@ressel1985finettitype proved a refinement of de Finetti's theorem. If the joint distribution of an exchangeable sequence factorizes as
 $$
 P(Z_1 = z_1, \ldots, Z_n = z_n) = \prod_{j=1}^n \beta(z_j) \, \varphi\!\left(\sum_{j=1}^n t(z_j)\right)
 $$
 for mappings $\beta$ and $t$ into an abelian semigroup, then the sequence is a unique mixture of i.i.d. sequences from a *generalized exponential family* determined by $(\beta, t)$. The sufficient statistic is $\sum_{j=1}^n t(z_j)$, and the mixing measure on the dual semigroup is the implicit prior. Depending on the form of $t$, the representation characterizes mixtures of specific parametric families --- normal, Poisson, gamma, and so on.
 
-Ressel's theorem is remarkable because it runs the logic of Bayesian inference in reverse. In standard Bayesian analysis, we *choose* a parametric family (say, normal) and then derive the sufficient statistic ($\bar{y}$ and $s^2$). Ressel's theorem says that if we observe a particular *form* of predictive sufficiency in the data --- if the predictive distribution depends on the data only through a particular type of summary --- then the underlying mixing measure *must* correspond to a specific parametric family. The sufficient statistic determines the model, not the other way around. This is why our framework can be "prior-free" in the operational sense: the form of the summary $S$ implicitly selects the class of mixing distributions, and the quantile transport map $Q$ encodes the resulting predictive distribution without ever explicitly specifying a prior or likelihood.
+Ressel's theorem runs the logic of Bayesian inference in reverse. In standard Bayesian analysis, we *choose* a parametric family (say, normal) and then derive the sufficient statistic ($\bar{y}$ and $s^2$). Ressel's theorem says that if we observe a particular *form* of predictive sufficiency in the data --- if the predictive distribution depends on the data only through a particular type of summary --- then the underlying mixing measure *must* correspond to a specific parametric family. The sufficient statistic determines the model, not the other way around. This is why our framework can be "prior-free" in the operational sense: the form of the summary $S$ implicitly selects the class of mixing distributions, and the quantile transport map $Q$ encodes the resulting predictive distribution without ever explicitly specifying a prior or likelihood.
 
 @fortini2025exchangeability provide a comprehensive review of these predictive characterizations, formalizing the principle that Bayesian predictive rules are probabilistic *learning rules*: the predictive distribution $P_n$ converges almost surely to the directing random measure $\tilde{F}$, simultaneously with the empirical distribution. The statistical model is the *limit of the predictive rule* --- one need not specify it in advance. @fortini2017predictive extend this program to Markov exchangeable processes.
 
 ### From Predictive Sufficiency to Quantile Transport {#sec-pred-transport}
 
-The theoretical chain above establishes that, under exchangeability and predictive sufficiency through $S$, there *exists* a parameter $\theta$, a prior $\pi(\theta)$, and a likelihood $p(z|\theta)$ such that
+Under exchangeability and predictive sufficiency through $S$, there *exists* a parameter $\theta$, a prior $\pi(\theta)$, and a likelihood $p(z|\theta)$ such that
 $$
 p(Y_{n+1} \mid x_{n+1}, Z_{1:n}) = \int p(Y_{n+1} \mid \theta, x_{n+1}) \, \pi(\theta \mid Z_{1:n}) \, d\theta.
 $$
@@ -292,7 +290,7 @@ Y_{n+1} = Q\!\left(\tau, \; x_{n+1}, \; S(Z_{1:n})\right), \quad \tau \sim \math
 $$ {#eq-pred-transport}
 where $Q$ is the conditional quantile function of $Y_{n+1}$ given the covariate and the sufficient summary. We learn $Q$ via a quantile neural network from simulated data.
 
-The method is *likelihood-free* and *prior-free* in the operational sense: we never specify $p(z|\theta)$ or $\pi(\theta)$. All we need is the ability to *simulate* sequences $(Z_1, \ldots, Z_n, Z_{n+1})$ from a forward generative model, from which we extract training tuples $(x_{n+1}, S(Z_{1:n}), Y_{n+1})$. The de Finetti--Ressel theory guarantees that an implicit prior and likelihood *exist* and could in principle be recovered from the learned quantile map, but we need not do so. This is the sense in which our approach is generative rather than inferential.
+The method is *likelihood-free* and *prior-free* in the operational sense: we never specify $p(z|\theta)$ or $\pi(\theta)$. All we need is the ability to *simulate* sequences $(Z_1, \ldots, Z_n, Z_{n+1})$ from a forward generative model, from which we extract training tuples $(x_{n+1}, S(Z_{1:n}), Y_{n+1})$. The de Finetti--Ressel theory guarantees that an implicit prior and likelihood *exist* and could in principle be recovered from the learned quantile map, but we need not do so.
 
 The generative Bayesian prediction algorithm proceeds as follows:
 
@@ -396,9 +394,9 @@ In @fig-pred-wang, the right panel shows the Wang distortion function. The S-sha
 
 ## Minimax Rates and Compositional Structure {#sec-pred-minimax}
 
-How many training samples $m$ does the generative approach need? The answer depends on the *effective dimension* $k$ of the summary statistic, not the full input dimension $d$. This is the mechanism by which deep networks escape the curse of dimensionality for structured prediction problems.
+How many training samples $m$ does the generative approach need? The answer depends on the *effective dimension* $k$ of the summary statistic, not the full input dimension $d$.
 
-We begin with the baseline: classical kernel methods. These estimators are well understood and minimax optimal for smooth functions, but they pay a heavy price as the input dimension grows. Understanding this price is essential for appreciating the advantage of the compositional approach.
+We begin with the baseline: classical kernel methods. These estimators are well understood and minimax optimal for smooth functions, but they pay a heavy price as the input dimension grows.
 
 Consider a $\beta$-Holder smooth conditional quantile function $Q_\tau(x)$ with $x \in \mathbb{R}^d$. The classic Nadaraya--Watson kernel estimator achieves the minimax optimal rate:
 $$
@@ -414,7 +412,7 @@ Q(\tau, z) = g(\tau, f(z)),
 $$
 where $f : \mathbb{R}^n \to \mathbb{R}^k$ is a summary map with $k \ll n$, and $g : [0,1] \times \mathbb{R}^k \to \mathbb{R}$. This arises naturally when sufficient statistics or learned embeddings of the history capture the relevant information for prediction.
 
-The following result shows that neural networks can exploit this compositional structure to achieve rates that depend on $k$ rather than $d$. The intuition is that the layered architecture of a deep network can learn the summary map $f$ and the quantile map $g$ separately, each in its own low-dimensional space, rather than approximating the full composition in the high-dimensional input space.
+The following result shows that neural networks can exploit this compositional structure to achieve rates that depend on $k$ rather than $d$. The layered architecture of a deep network can learn the summary map $f$ and the quantile map $g$ separately, each in its own low-dimensional space, rather than approximating the full composition in the high-dimensional input space.
 
 ::: {.callout-tip appearance="simple" title="Proposition 11.2: Minimax Rate for Generative Quantile Prediction"}
 Let $f : \mathbb{R}^n \to \mathbb{R}^k$ be a summary map and $g : [0,1] \times \mathbb{R}^k \to \mathbb{R}$, with $f$ and $g$ each $\beta$-Holder smooth ($\beta > 0$), so that $Q(\tau, s) = g(\tau, s)$ where $s = f(z)$. Let $\hat{Q}$ be a ReLU network estimator with depth $O(\log m)$ trained on $m$ tuples. Then
@@ -424,9 +422,9 @@ $$ {#eq-pred-minimax}
 where $P_S$ is the distribution of $S = f(Z)$ and $k = \dim(S)$. This rate is minimax optimal over the compositional function class.
 :::
 
-The result follows from the work of @schmidt-hieber2020nonparametric and @schmidt-hieber2024generative. The key insight is that each layer of the ReLU network can approximate one component of the composition, so the approximation complexity depends on the dimension $k$ of the intermediate representation, not the full input dimension $d$.
+The result follows from the work of @schmidt-hieber2020nonparametric and @schmidt-hieber2024generative. Each layer of the ReLU network can approximate one component of the composition, so the approximation complexity depends on the dimension $k$ of the intermediate representation, not the full input dimension $d$.
 
-Proposition 11.2 has a clear practical message: invest in finding good summary statistics. The convergence rate depends on $k$, not on $d$, so a well-chosen low-dimensional summary $S$ can make the difference between a method that needs thousands of training samples and one that needs millions. In the extreme case where $k = 1$ (the entire history is compressed into a single number), the rate is $O(m^{-2\beta/(2\beta+2)})$, which for $\beta = 2$ gives $O(m^{-2/3})$ --- close to the parametric rate. Of course, compressing to $k = 1$ may lose important information, so the choice of $k$ involves a bias-variance tradeoff that we discuss below.
+The practical message: invest in finding good summary statistics. The convergence rate depends on $k$, not on $d$, so a well-chosen low-dimensional summary $S$ can make the difference between a method that needs thousands of training samples and one that needs millions. In the extreme case where $k = 1$ (the entire history is compressed into a single number), the rate is $O(m^{-2\beta/(2\beta+2)})$, which for $\beta = 2$ gives $O(m^{-2/3})$ --- close to the parametric rate. Of course, compressing to $k = 1$ may lose important information, so the choice of $k$ involves a bias-variance tradeoff that we discuss below.
 
 *Why composition matters.* ReLU networks exploit compositional structure through their layered architecture. Each layer learns a component of the composition, so the approximation complexity depends on $k$ rather than $d$. Kernel methods, by contrast, treat the input as a flat vector in $\mathbb{R}^d$ and cannot exploit such structure. The dimension gap between $k$ and $d$ determines the practical advantage of neural networks over kernel methods.
 
@@ -445,7 +443,7 @@ The convergence rate depends on $k$, so choosing a good summary $S$ is essential
 
 The choice of $k$ involves a bias--variance tradeoff: small $k$ yields fast convergence but risks information loss, while large $k$ preserves information at the cost of slower rates. In practice, cross-validation on the pinball loss provides a principled way to select $k$: for each candidate summary dimension, we train the quantile network, evaluate the out-of-sample pinball loss, and choose the $k$ that minimizes it. If the selected $k$ is much smaller than $d$, this confirms that the problem has low intrinsic dimensionality and the neural network approach will be advantageous.
 
-It is worth emphasizing what Proposition 11.2 does *not* say. It does not say that neural networks are always better than kernel methods. When $k = d$ (no low-dimensional structure exists), the kernel rate $m^{-2\beta/(2\beta+d)}$ is actually slightly better than the neural network rate $m^{-2\beta/(2\beta+d+1)}$, because the neural network must also handle the additional $\tau$ input. The advantage of neural networks is conditional on the existence of compositional structure, and the magnitude of the advantage is proportional to the gap between $d$ and $k$. The practical lesson is clear: before reaching for a deep network, ask whether your prediction problem has a natural low-dimensional summary. If it does, the theory predicts --- and our simulation confirms --- that neural networks will be substantially more efficient.
+What Proposition 11.2 does *not* say is also important. It does not say that neural networks are always better than kernel methods. When $k = d$ (no low-dimensional structure exists), the kernel rate $m^{-2\beta/(2\beta+d)}$ is actually slightly better than the neural network rate $m^{-2\beta/(2\beta+d+1)}$, because the neural network must also handle the additional $\tau$ input. The advantage of neural networks is conditional on the existence of compositional structure, and the magnitude of the advantage is proportional to the gap between $d$ and $k$. Before reaching for a deep network, ask whether your prediction problem has a natural low-dimensional summary. If it does, the theory predicts --- and our simulation confirms --- that neural networks will be substantially more efficient.
 
 
 ## Prediction-Powered Inference (PPI) {#sec-pred-ppi}

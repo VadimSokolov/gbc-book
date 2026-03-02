@@ -6,3 +6,6 @@
 !*.yml
 !*.yaml
 !.gitignore
+
+/.quarto/
+**/*.quarto_ipynb

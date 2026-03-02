@@ -2,13 +2,13 @@
 
 > "*Quantiles are optimal.*" -- Emanuel Parzen
 
-The previous chapter introduced the datasets that will serve as running examples throughout this book. Before we can build the machinery of generative Bayesian computation, we need a single mathematical object that ties together probability, optimization, and simulation. That object is the **quantile function**.
+The previous chapter introduced the datasets that will serve as running examples throughout this book. The machinery of generative Bayesian computation rests on a single mathematical object that ties together probability, optimization, and simulation: the **quantile function**.
 
 Most of statistics is built on densities and likelihoods. We write down $p(y|\theta)$, compute posteriors via Bayes' rule, and evaluate expectations by integrating against density functions. This density-centric worldview is so deeply ingrained that it can be hard to see an alternative. But there is one, and it is both older and, in many ways, more fundamental.
 
-The quantile function $Q(\tau) = F^{-1}(\tau)$ maps probability levels to outcomes. Where a density tells you "how likely is this value?", a quantile function tells you "what value corresponds to this probability level?" This simple inversion turns out to be remarkably powerful. Quantile functions compose naturally under monotone transformations---exactly the structure exploited by neural networks. They connect directly to optimization through the pinball loss. And they provide the bridge between uniform random variables and arbitrary distributions that underlies all simulation.
+The quantile function $Q(\tau) = F^{-1}(\tau)$ maps probability levels to outcomes. Where a density tells you "how likely is this value?", a quantile function tells you "what value corresponds to this probability level?" This simple inversion has far-reaching consequences. Quantile functions compose naturally under monotone transformations---exactly the structure exploited by neural networks. They connect directly to optimization through the pinball loss. And they provide the bridge between uniform random variables and arbitrary distributions that underlies all simulation.
 
-In this chapter, we develop quantile functions from first principles. We begin with Parzen's vision of quantiles as the fundamental objects of statistical modeling (@sec-quant-parzen), then define the quantile function precisely and explore its properties (@sec-quant-inverse). The check loss---also called the pinball loss---provides the optimization machinery that allows us to *learn* quantile functions from data (@sec-quant-check-loss). Linear quantile regression (@sec-quant-linear) shows this in action for parametric models. We address the non-differentiability of the check loss through subgradient methods (@sec-quant-subgradients), which are essential for both linear programming and neural network training. Finally, the compositional identity (@sec-quant-compositional) reveals the deep connection between quantile functions and generative models---the conceptual backbone of everything that follows.
+In this chapter, we develop quantile functions from first principles. We begin with Parzen's vision of quantiles as the fundamental objects of statistical modeling (@sec-quant-parzen), then define the quantile function precisely and explore its properties (@sec-quant-inverse). The check loss---also called the pinball loss---provides the optimization machinery that allows us to *learn* quantile functions from data (@sec-quant-check-loss). Linear quantile regression (@sec-quant-linear) shows this in action for parametric models. We address the non-differentiability of the check loss through subgradient methods (@sec-quant-subgradients), which are essential for both linear programming and neural network training. Finally, the compositional identity (@sec-quant-compositional) reveals the deep connection between quantile functions and generative models---the connection between quantile functions and generative models that underpins the rest of this book.
 
 
 ## Parzen's Quantile Framework {#sec-quant-parzen}
@@ -36,7 +36,7 @@ S(y) = -\frac{f'(y)}{f(y)},
 $$
 which measures how quickly the log-density changes. For a normal distribution $N(\mu, \sigma^2)$, the score is $S(y) = (y - \mu)/\sigma^2$---linear in $y$. For heavier-tailed distributions like the Cauchy, the score is bounded, reflecting the slower decay of the tails.
 
-*Quantiles as sufficient statistics.* One of Parzen's most striking observations is that for location-scale families, the quantile function encodes the parameters directly. If $Y$ has a location-scale distribution with CDF $F((y - \mu)/\sigma)$, then
+*Quantiles as sufficient statistics.* For location-scale families, the quantile function encodes the parameters directly. If $Y$ has a location-scale distribution with CDF $F((y - \mu)/\sigma)$, then
 $$
 Q(\tau) = \mu + \sigma \cdot Q_0(\tau),
 $$
@@ -70,7 +70,7 @@ Y \stackrel{d}{=} Q(F(Y)).
 $$
 When $F$ is continuous, $F(Y) \sim \text{Uniform}(0,1)$ (the probability integral transform), and $Q(U) \sim F$ for $U \sim \text{Uniform}(0,1)$.
 
-Let us build intuition with some standard distributions.
+We illustrate with some standard distributions.
 
 *Normal distribution.* If $Y \sim N(\mu, \sigma^2)$, then $Q(\tau) = \mu + \sigma \Phi^{-1}(\tau)$, where $\Phi^{-1}$ is the standard normal quantile function (the "probit" function). There is no closed-form expression for $\Phi^{-1}$, but it is tabulated and efficiently computable. Key values: $Q(0.025) = \mu - 1.96\sigma$, $Q(0.5) = \mu$, $Q(0.975) = \mu + 1.96\sigma$.
 
@@ -88,7 +88,7 @@ The tangent function stretches the tails dramatically: $Q(0.99) \approx \mu + 31
 
 *Uniform distribution.* If $Y \sim \text{Uniform}(a, b)$, then $Q(\tau) = a + (b-a)\tau$. The quantile function is simply a linear function of $\tau$---the simplest possible case.
 
-The most important property of the quantile function for our purposes is the **simulation principle** (also called the **inverse transform method**). A natural question arises: if we know the quantile function $Q$, can we use it to generate random samples from the distribution $F$? The next result tells us the answer is yes, and the recipe is astonishingly simple---just feed uniform random numbers through $Q$.
+The most important property of the quantile function for our purposes is the **simulation principle** (also called the **inverse transform method**): if we know the quantile function $Q$, we can generate random samples from $F$ by feeding uniform random numbers through $Q$.
 
 ::: {.callout-tip appearance="simple" title="Proposition 3.1: Inverse Transform Sampling"}
 If $U \sim \text{Uniform}(0,1)$ and $F$ is any CDF, then $Y = Q(U) = F^{-1}(U)$ has CDF $F$.
@@ -153,7 +153,7 @@ plt.show()
 
 ## The Check (Pinball) Loss {#sec-quant-check-loss}
 
-Having established what quantile functions are, we now ask: how do we *estimate* them from data? The answer comes from a beautiful connection between quantiles and optimization, mediated by the **check loss** (also known as the **pinball loss**).
+How do we *estimate* quantile functions from data? The answer comes from a connection between quantiles and optimization, mediated by the **check loss** (also known as the **pinball loss**).
 
 ::: {.callout-tip appearance="simple" title="Definition 3.2: Check (Pinball) Loss"}
 For $\tau \in (0,1)$, the **check loss** is
@@ -198,7 +198,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-We have defined the check loss geometrically---as an asymmetric, piecewise-linear penalty. But why should minimizing this particular function produce quantiles? The next result provides the rigorous answer and is one of the most important theorems in this chapter. It tells us that *quantiles are optimal* in a precise variational sense: the $\tau$-th quantile is the unique minimizer of the expected check loss at level $\tau$. This is the mathematical engine that will allow us to learn quantile functions from data by solving optimization problems.
+We have defined the check loss geometrically---as an asymmetric, piecewise-linear penalty. But why should minimizing this particular function produce quantiles? The next result provides the rigorous answer: the $\tau$-th quantile is the unique minimizer of the expected check loss at level $\tau$.
 
 ::: {.callout-tip appearance="simple" title="Theorem 3.1: Quantile as Minimizer of Check Loss"}
 For a random variable $Y$ with CDF $F$, the $\tau$-th quantile minimizes the expected check loss:
@@ -217,9 +217,9 @@ $$
 $$
 Setting this to zero gives $F(q) = \tau$, i.e., $q = F^{-1}(\tau)$. The second derivative is $f(q) \geq 0$, confirming a minimum. $\square$
 
-In plain language, this theorem says that if we want to find the value below which a fraction $\tau$ of the distribution falls, we can do so by minimizing a weighted sum of over- and under-prediction errors. The asymmetric weights---$\tau$ for undershoot and $(1-\tau)$ for overshoot---tilt the optimal prediction toward the $\tau$-th quantile rather than the mean. This has an immediate practical consequence: we can estimate any quantile from a sample of data simply by solving an optimization problem, and this is exactly what we will do with neural networks in @sec-iqn.
+In plain language, this theorem says that if we want to find the value below which a fraction $\tau$ of the distribution falls, we can do so by minimizing a weighted sum of over- and under-prediction errors. The asymmetric weights---$\tau$ for undershoot and $(1-\tau)$ for overshoot---tilt the optimal prediction toward the $\tau$-th quantile rather than the mean.
 
-This result transforms the problem of estimating quantiles into an optimization problem. Given observations $y_1, \ldots, y_n$, we estimate the $\tau$-th quantile by solving
+Given observations $y_1, \ldots, y_n$, we estimate the $\tau$-th quantile by solving
 $$
 \hat{q}_\tau = \arg\min_{q} \frac{1}{n} \sum_{i=1}^n \rho_\tau(y_i - q).
 $$ {#eq-sample-quantile}
@@ -313,12 +313,12 @@ def pinball_loss(y, y_hat, tau):
     return torch.mean(torch.maximum(tau * e, (tau - 1) * e))
 ```
 
-The key insight is that this single function, evaluated at different values of $\tau$, gives us the entire conditional distribution. We will exploit this repeatedly in subsequent chapters.
+This single function, evaluated at different values of $\tau$, gives us the entire conditional distribution.
 
 
 ## Linear Quantile Regression {#sec-quant-linear}
 
-@koenker1978regression introduced *quantile regression*, extending the check loss from estimating unconditional quantiles to estimating *conditional* quantile functions. This was a landmark contribution that opened the door to distribution-free modeling of heterogeneous data.
+@koenker1978regression introduced *quantile regression*, extending the check loss from estimating unconditional quantiles to estimating *conditional* quantile functions.
 
 In ordinary least squares, we model the conditional mean:
 $$
@@ -337,7 +337,7 @@ $$ {#eq-qr-estimator}
 
 This is a linear programming problem (since $\rho_\tau$ is piecewise linear) and can be solved efficiently using simplex or interior point methods. The `quantreg` package in R and the `statsmodels.regression.quantile_regression` module in Python both implement these solvers. @koenker2005quantile provides an extensive treatment of algorithms and theory, including asymptotic properties: under regularity conditions, $\hat{\beta}(\tau)$ is consistent, asymptotically normal, and has a sandwich-form covariance matrix that depends on the density of $Y$ at the conditional quantile.
 
-The difference between OLS and quantile regression is fundamental. OLS models the *mean* of $Y|X$, assuming a single relationship $E[Y|X] = x'\beta$ and estimating one set of coefficients; if the conditional distribution is heteroskedastic or skewed, OLS misses this structure entirely. Quantile regression, by contrast, models the *entire conditional distribution* of $Y|X$, one quantile at a time. The family of lines $\{x'\beta(\tau) : \tau \in (0,1)\}$ traces out the conditional distribution as $\tau$ varies.
+OLS models the *mean* of $Y|X$, assuming a single relationship $E[Y|X] = x'\beta$ and estimating one set of coefficients; if the conditional distribution is heteroskedastic or skewed, OLS misses this structure entirely. Quantile regression, by contrast, models the *entire conditional distribution* of $Y|X$, one quantile at a time. The family of lines $\{x'\beta(\tau) : \tau \in (0,1)\}$ traces out the conditional distribution as $\tau$ varies.
 
 Consider a simple example where the variance of $Y$ increases with $X$. OLS would fit a single line through the middle of the data---it is structurally incapable of representing the changing spread, no matter how many covariates we add. Quantile regression at $\tau = 0.1$ and $\tau = 0.9$ would fit two lines that *spread apart* as $X$ increases, capturing the heteroskedasticity directly. The gap between these two lines at any given $x$ provides an 80% prediction interval, and the rate at which the gap grows with $x$ reveals how rapidly uncertainty increases.
 
@@ -486,7 +486,7 @@ $$
 $$
 Away from zero, the subgradient is just the ordinary derivative $\text{sign}(u)$. At the kink $u = 0$, any slope between $-1$ and $+1$ defines a supporting line that lies below the graph of $|u|$. The check loss $\rho_\tau$ generalizes this picture by making the two branches asymmetric.
 
-The next result gives us the subdifferential of the check loss explicitly. We need this because the subgradient is the workhorse of every optimization algorithm we will use---from the simplex method for linear quantile regression to Adam for training IQN. Knowing the subdifferential tells us exactly what "gradient" information is available to the optimizer at every point, including the troublesome kink.
+The next result gives us the subdifferential of the check loss explicitly. The subgradient is the workhorse of every optimization algorithm we will use---from the simplex method for linear quantile regression to Adam for training IQN.
 
 ::: {.callout-tip appearance="simple" title="Proposition 3.2: Subdifferential of the Check Loss"}
 $$
@@ -522,9 +522,9 @@ $$
 
 The non-differentiability at $y_i = g_\theta(x_i, \tau)$ is a set of measure zero and does not cause problems in practice. SGD with the subgradient converges for convex problems and works reliably for neural networks, just as it does for ReLU networks (which have the same non-differentiability at zero).
 
-*The kink at zero and why it does not matter.* It is worth pausing to understand why the non-differentiable point at $u = 0$ does not derail SGD in practice. The kink in $\rho_\tau$ is a single point---a set of Lebesgue measure zero on the real line. During stochastic optimization, the residual $y_i - g_\theta(x_i, \tau)$ lands exactly on zero with probability zero for continuous data. Even if it does, the subgradient selection $g(u) = \tau - \mathbf{1}(u < 0)$ assigns the value $\tau$ at $u = 0$, which lies in the subdifferential $[\tau - 1, \tau]$, so the update remains valid. The situation is completely analogous to the ReLU activation function $\max(0, z)$, which has a kink at $z = 0$ yet is trained successfully in billions of neural networks every day.
+*The kink at zero and why it does not matter.* The kink in $\rho_\tau$ is a single point---a set of Lebesgue measure zero on the real line. During stochastic optimization, the residual $y_i - g_\theta(x_i, \tau)$ lands exactly on zero with probability zero for continuous data. Even if it does, the subgradient selection $g(u) = \tau - \mathbf{1}(u < 0)$ assigns the value $\tau$ at $u = 0$, which lies in the subdifferential $[\tau - 1, \tau]$, so the update remains valid. The situation is completely analogous to the ReLU activation function $\max(0, z)$, which has a kink at $z = 0$ yet is trained successfully in billions of neural networks every day.
 
-In PyTorch, the `torch.maximum` function used in our implementation handles the non-differentiability transparently. When we write `torch.maximum(tau * e, (tau - 1) * e)`, the autograd engine computes the gradient of whichever branch is active. At the tie point $e = 0$, PyTorch follows the convention of returning the gradient from the first argument (the $\tau \cdot e$ branch), which gives $\tau$---exactly our subgradient selection in @eq-check-subgrad-selection. We never need to handle this case manually. The practical lesson is reassuring: the pinball loss can be implemented in a single line of PyTorch, and backward passes through it are handled automatically without any special treatment of the kink.
+In PyTorch, the `torch.maximum` function used in our implementation handles the non-differentiability transparently. When we write `torch.maximum(tau * e, (tau - 1) * e)`, the autograd engine computes the gradient of whichever branch is active. At the tie point $e = 0$, PyTorch follows the convention of returning the gradient from the first argument (the $\tau \cdot e$ branch), which gives $\tau$---exactly our subgradient selection in @eq-check-subgrad-selection. We never need to handle this case manually. The pinball loss can be implemented in a single line of PyTorch, and backward passes through it are handled automatically without any special treatment of the kink.
 
 *Smooth approximation.* For applications where a smooth loss is preferred (e.g., when using second-order optimizers or when monitoring convergence), one can smooth the kink in the check loss using a Huber-style approximation:
 
@@ -598,12 +598,12 @@ plt.show()
 
 @fig-subgradient shows the subgradient in action. The left panel displays the check loss and its subgradient for $\tau = 0.75$: a constant $0.75$ for positive residuals and $-0.25$ for negative residuals, with a discontinuous jump at zero. The right panel demonstrates subgradient descent converging to the true 75th percentile of a mixture distribution. Notice that convergence is fast despite the non-smooth objective---within about 50 iterations, the estimate is already close to the true value. This is typical of subgradient methods on convex problems: the iterates converge at a rate of $O(1/\sqrt{t})$, which is slower than the $O(1/t)$ rate of gradient descent on smooth problems, but entirely adequate for our purposes.
 
-The key practical takeaway is this: despite the non-smoothness of $\rho_\tau$, standard SGD (and its variants like Adam) work well for training quantile models, including deep neural networks. The non-differentiability at a single point is a measure-zero event that automatic differentiation handles gracefully.
+Despite the non-smoothness of $\rho_\tau$, standard SGD (and its variants like Adam) work well for training quantile models, including deep neural networks. The non-differentiability at a single point is a measure-zero event that automatic differentiation handles gracefully.
 
 
 ## The Compositional Identity {#sec-quant-compositional}
 
-We now arrive at the central insight that connects quantile regression to generative modeling---the conceptual backbone of GBC.
+We now arrive at the connection between quantile regression and generative modeling.
 
 Suppose we model the conditional relationship between $Y$ and $X$ using a latent uniform variable:
 $$
@@ -611,7 +611,7 @@ Y = G(U, X), \quad U \sim \text{Uniform}(0,1), \quad U \perp X.
 $$ {#eq-generator}
 The function $G$ is a *generator*: given inputs $X$ and a source of randomness $U$, it produces outputs $Y$. Different draws of $U$ produce different realizations of $Y$ for the same $X$, capturing the conditional distribution $P(Y|X)$.
 
-Now comes the key question: what is $G$? A natural conjecture is that $G$ must be related to the conditional quantile function, since both map from the unit interval to the support of $Y$. The next theorem confirms this intuition and establishes the precise connection. It is, in our view, the single most important result in this chapter, because it bridges the gap between quantile regression (a statistical estimation method) and generative modeling (a machine learning paradigm).
+What is $G$? Since both $G$ and the conditional quantile function map from the unit interval to the support of $Y$, they should be related. The next theorem confirms this and establishes the precise connection.
 
 ::: {.callout-tip appearance="simple" title="Theorem 3.2: The Compositional Identity"}
 If $Y = G(U, X)$ where $U \sim \text{Uniform}(0,1)$ is independent of $X$, and $G(\cdot, x)$ is non-decreasing in its first argument for each $x$, then
@@ -634,7 +634,7 @@ $$
 G(\tau, x) = F_{Y|X=x}^{-1}(\tau) = Q_Y(\tau | x). \quad \square
 $$
 
-This result is profound in its simplicity. It says:
+This result says:
 
 > *The conditional quantile function IS the generator.*
 
