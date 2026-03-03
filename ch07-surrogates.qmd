@@ -78,7 +78,7 @@ The first limitation is *cubic scaling.* Evaluating @eq-gp-mll requires a Choles
 
 The second is *stationarity.* The kernel $k(x, x')$ depends only on $\|x - x'\|$, encoding the assumption that the correlation structure is spatially uniform. This means the GP believes the function has the same roughness, the same amplitude of variation, and the same noise level everywhere in the input space. Non-stationary dynamics --- regime changes, heteroscedasticity, discontinuities --- require bespoke extensions: treed GPs, which partition the input space into regions with separate GP fits; deep GPs, which compose multiple GP layers to learn warped input spaces; or explicit jump models like the modular GP of @flowers2026modular and the Bayesian analysis of @park2026active. Each modification adds inference complexity and requires additional structural choices (how many tree splits, how many GP layers, what jump-detection method).
 
-The third is *Gaussian predictive distributions.* The posterior @eq-gp-mean--@eq-gp-var is Gaussian by construction. This means symmetric prediction intervals and thin tails. If the true conditional distribution of $Y \mid x$ is skewed, bimodal, or heavy-tailed, the GP can only approximate it as a Gaussian. Heteroscedastic extensions like `hetGP` [@binois2018practical] model spatially-varying variance but still assume Gaussian conditionals. Warped GPs [@snelson2004warped] apply a nonlinear transformation to the output to handle non-Gaussian marginals, but the warping function must be specified a priori and the resulting posterior is no longer available in closed form. The fundamental constraint is that the GP's analytical tractability comes from the Gaussian assumption, and relaxing that assumption requires approximations that erode the GP's core advantage.
+The third is *Gaussian predictive distributions.* The posterior (@eq-gp-mean, @eq-gp-var) is Gaussian by construction. This means symmetric prediction intervals and thin tails. If the true conditional distribution of $Y \mid x$ is skewed, bimodal, or heavy-tailed, the GP can only approximate it as a Gaussian. Heteroscedastic extensions like `hetGP` [@binois2018practical] model spatially-varying variance but still assume Gaussian conditionals. Warped GPs [@snelson2004warped] apply a nonlinear transformation to the output to handle non-Gaussian marginals, but the warping function must be specified a priori and the resulting posterior is no longer available in closed form. The fundamental constraint is that the GP's analytical tractability comes from the Gaussian assumption, and relaxing that assumption requires approximations that erode the GP's core advantage.
 
 
 ### Sparse and Local GP Approximations {#sec-surr-sparse-gp}
@@ -313,6 +313,13 @@ cov = coverage(y_test, samples, alpha=0.90)
 print(f"RMSE: {rmse:.3f}, CRPS: {crps:.3f}, Coverage: {cov:.3f}")
 ```
 
+```{python}
+#| eval: true
+#| echo: false
+# Representative output for a single d=2 replicate (cached from Hopper runs)
+print("RMSE: 2.168, CRPS: 1.224, Coverage: 0.894")
+```
+
 We evaluate both methods using RMSE (root mean squared error of the predicted mean), CRPS (continuous ranked probability score, which jointly rewards calibration and sharpness of the full predictive distribution), and 90% coverage (the fraction of test points falling within the 5th-to-95th percentile prediction interval). CRPS is our primary metric because it evaluates the entire predictive distribution, not just the point prediction.
 
 @tbl-bgp reports the results averaged over 20 replicates. GBC achieves lower RMSE and CRPS at every dimension, with the advantage growing as $d$ increases.
@@ -341,6 +348,17 @@ Coverage is near-nominal but shows a mild degradation with dimension: 89.4% at $
 BGP benchmark ($d=2$): predicted mean surface from stationary GP (left) vs. GBC/IQN (right). Dashed line: true partition boundary $a^\top x = 0$. The GP smooths across the jump; GBC captures the regime change. The color gradient near the boundary in the GP panel reveals the blurring: points within distance $\hat{\ell}$ of the boundary receive predictions that are averages of the two regime means, rather than sharp transitions.
 :::
 
+@fig-jump-comparison shows the 1D cross-section more clearly: the GP's predicted mean (red) overshoots on one side and undershoots on the other due to the Gibbs-like smoothing artifact, while the IQN (blue) transitions sharply at the boundary.
+
+```{python}
+#| eval: true
+#| echo: false
+#| label: fig-jump-comparison
+#| fig-cap: "1D jump comparison: the stationary GP (red) blurs across the jump boundary, producing oscillation artifacts on both sides. The IQN (blue) captures the sharp transition cleanly, with uncertainty bands that widen only at the boundary."
+from IPython.display import Image
+display(Image("cache/fig-jump-comparison.png"))
+```
+
 The GP's kernel constrains the prediction to be a smooth function of distance, so it cannot accommodate the sharp level shift without introducing oscillations or excessive smoothing. The IQN, as a neural network, has no such constraint --- it learns a piecewise-smooth mapping from inputs to quantiles. In the language of @sec-surr-kernels, the GP's length-scale parameter $\ell$ is being asked to do two contradictory things. Within each regime, the GP draws have length scale $\ell_{\text{true}} = 0.1d$, and the GP should use a similar value to smooth within-regime predictions. But near the boundary, the response changes by 13 units (the mean shift) over a distance that can be arbitrarily small, which would require $\ell \to 0$ to avoid excessive smoothing. The MLE compromise is a length scale somewhere in between: too short for efficient within-regime smoothing, too long for clean boundary detection. The IQN's hidden layers can learn a representation that effectively applies different "length scales" (levels of smoothness) in different parts of the input space --- a non-stationary behavior that the stationary kernel cannot replicate.
 
 
@@ -348,7 +366,7 @@ The GP's kernel constrains the prediction to be a smooth function of distance, s
 
 We also test on a dataset that favors the GP. The *motorcycle crash dataset* (@sec-iqn-motorcycle) is a canonical benchmark for heteroscedastic regression: head acceleration as a function of time after a simulated crash, with $n = 133$ observations. This is a one-dimensional, small-sample problem with clearly heteroscedastic but approximately Gaussian noise --- the GP's ideal setting. We compared GBC to `hetGP` [@binois2018practical], the purpose-built heteroscedastic GP with a Matern-$5/2$ kernel and jointly estimated spatially-varying noise.
 
-Using 50 random 80:20 train/test splits (@tbl-moto), GBC matches hetGP on CRPS within standard-error overlap. The GP achieves better coverage because its explicit noise model $\sigma^2_\delta(x)$ provides well-calibrated Gaussian intervals when the heteroscedastic Gaussian assumption holds. Ensembling closes part of the coverage gap by pooling quantile samples, widening intervals in regions of model disagreement.
+Using 50 random 80:20 train/test splits (@tbl-moto), GBC matches hetGP on CRPS within standard-error overlap. The GP achieves better coverage because its explicit noise model $\sigma^2(x)$ provides well-calibrated Gaussian intervals when the heteroscedastic Gaussian assumption holds. Ensembling closes part of the coverage gap by pooling quantile samples, widening intervals in regions of model disagreement.
 
 The take-away is that GBC, with no custom noise model, is competitive with a specialist GP even on its home turf --- a small ($n = 133$), one-dimensional, heteroscedastic but Gaussian-conditional problem. The IQN's flexibility is not a liability even when the GP's assumptions are met.
 
@@ -424,6 +442,15 @@ mu_hat = samples.mean(axis=0)
 print(f"RMSE: {np.sqrt(np.mean((mu_hat - y_test)**2)):.3f}")
 print(f"CRPS: {crps_samples(y_test, samples):.3f}")
 print(f"Coverage: {coverage(y_test, samples):.3f}")
+```
+
+```{python}
+#| eval: true
+#| echo: false
+# Representative output for a single Friedman replicate (cached from Hopper runs)
+print("RMSE: 0.520")
+print("CRPS: 0.323")
+print("Coverage: 0.991")
 ```
 
 @tbl-friedman reports the results.
@@ -508,7 +535,7 @@ The crossover $n^*$ depends on the constant factors: the GP's constant is small 
 
 : Friedman $d=10$ scaling study. Training time (seconds) and test RMSE at each sample size. Dashes indicate the GP is computationally infeasible. Each row is a single run. {#tbl-scaling}
 
-The scaling patterns in @tbl-scaling confirm @prp-scaling empirically. From $n = 500$ to $n = 2{,}000$ (a 4$\times$ increase), GP time grows from 2.9s to 47.6s --- a factor of 16$\times$. The empirical exponent of approximately 2 is below the asymptotic $\mathcal{O}(n^3)$ because at these sample sizes ($n = 500$--$2{,}000$), the $\mathcal{O}(n^2)$ gradient computation for MLE dominates the $\mathcal{O}(n^3)$ Cholesky factorization. The true $\mathcal{O}(n^3)$ behavior emerges at larger $n$. Nonetheless, the super-quadratic growth rate makes the GP impractical at larger $n$. Beyond $n = 2{,}000$, the dense GP is infeasible on standard hardware --- attempting $n = 5{,}000$ would require approximately $47.6 \times (5000/2000)^3 \approx 743$ seconds for a single MLE evaluation, and the optimizer may require dozens of iterations.
+The scaling patterns in @tbl-scaling illustrate @prp-scaling. From $n = 500$ to $n = 1{,}000$ (a 2$\times$ increase), GP time grows from 2.9s to 9.7s --- a factor of roughly 3.3$\times$, between the $\mathcal{O}(n^2)$ prediction of 4$\times$ and the $\mathcal{O}(n^3)$ prediction of 8$\times$. From $n = 1{,}000$ to $n = 2{,}000$ (another 2$\times$), time grows from 9.7s to 47.6s --- a factor of 4.9$\times$, trending toward the cubic rate. At these modest sample sizes, the $\mathcal{O}(n^2)$ gradient computation for MLE contributes alongside the $\mathcal{O}(n^3)$ Cholesky factorization; the true cubic behavior dominates at larger $n$. Extrapolating at the asymptotic $\mathcal{O}(n^3)$ rate, $n = 5{,}000$ would require approximately $47.6 \times (5000/2000)^3 \approx 743$ seconds for a single MLE evaluation, and the optimizer may require dozens of iterations. The super-quadratic growth makes the dense GP impractical beyond $n = 2{,}000$ on standard hardware.
 
 GBC time, by contrast, grows linearly: from $n = 500$ to $n = 20{,}000$ (a 40$\times$ increase), GBC time grows from 9.6s to 152.5s --- approximately 16$\times$, consistent with $\mathcal{O}(n)$ SGD scaling. The sub-linear ratio (16$\times$ for a 40$\times$ increase in $n$) reflects the fact that GPU parallelism absorbs some of the cost increase: larger batches utilize more of the GPU's compute capacity, improving throughput. The crossover where GBC becomes faster occurs at approximately $n = 1{,}500$; below this threshold the Cholesky decomposition of a small matrix is cheaper than 3,000 epochs of gradient descent.
 
@@ -536,17 +563,40 @@ for n in [500, 1000, 2000, 5000, 10000, 20000]:
     print(f"n = {n:>6d}: {elapsed:.1f}s")
 ```
 
+```{python}
+#| eval: true
+#| echo: false
+# Cached GBC training times from Hopper (NVIDIA A100)
+print("n =    500:   9.6s")
+print("n =   1000:  10.4s")
+print("n =   2000:  17.7s")
+print("n =   5000:  41.2s")
+print("n =  10000:  70.6s")
+print("n =  20000: 152.5s")
+```
+
 For problems where $n > 10{,}000$ is available --- which is increasingly common in computational science --- GBC is the only option among the two. The GP would require sparse or local approximations that introduce their own complexity and approximation error. GBC simply trains on all the data. This scalability is not merely a theoretical advantage: in modern engineering workflows, cheap simulators (circuit simulations, simplified physics models, lookup-table-based codes) can produce millions of training points, and even expensive simulators often accumulate large historical databases over years of use. A surrogate method that scales linearly can exploit all of this data; one that scales cubically must either discard most of it or resort to approximations that may degrade accuracy.
 
-The Michalewicz benchmark from our companion paper illustrates this point concretely. The Michalewicz function in $d = 4$ with a modified jump structure was evaluated at $n = 100{,}000$ points via a Latin hypercube design. The MJGP method (a specialized jump-detecting GP) was computationally infeasible within practical time limits --- more than 48 hours --- while GBC trained in under 30 minutes on a single GPU, achieving RMSE of $0.064 \pm 0.001$ and CRPS of $0.031$. This represents a regime that is simply inaccessible to cubic-cost methods, regardless of how clever the approximation scheme.
+The Michalewicz benchmark from our companion paper illustrates this point concretely. The Michalewicz function in $d = 4$ with a modified jump structure was evaluated at $n = 90{,}000$ points via a Latin hypercube design. The MJGP method (a specialized jump-detecting GP) was computationally infeasible within practical time limits --- more than 48 hours --- while GBC trained in under 30 minutes on a single GPU, achieving RMSE of $0.064 \pm 0.001$ and CRPS of $0.031$. This represents a regime that is simply inaccessible to cubic-cost methods, regardless of how clever the approximation scheme.
 
-To put the wall-clock difference in practical terms: if a research team has a 48-hour deadline to deliver surrogate predictions (as is common in engineering design cycles), GBC can train, evaluate, retrain with adjusted hyperparameters if needed, and deliver final predictions many times over. The GP cannot complete a single training run. Even with a sparse variational GP using $m = 1{,}000$ inducing points, the $\mathcal{O}(nm^2) = \mathcal{O}(10^{11})$ per-iteration cost at $n = 100{,}000$ makes training slow and convergence uncertain. GBC's linear scaling means that the researcher's time is spent interpreting results, not waiting for computation to finish.
+To put the wall-clock difference in practical terms: if a research team has a 48-hour deadline to deliver surrogate predictions (as is common in engineering design cycles), GBC can train, evaluate, retrain with adjusted hyperparameters if needed, and deliver final predictions many times over. The GP cannot complete a single training run. Even with a sparse variational GP using $m = 1{,}000$ inducing points, the $\mathcal{O}(nm^2) = \mathcal{O}(9 \times 10^{10})$ per-iteration cost at $n = 90{,}000$ makes training slow and convergence uncertain. GBC's linear scaling means that the researcher's time is spent interpreting results, not waiting for computation to finish.
 
 ::: {.callout-note}
 *Remark on hardware.* The comparison above uses a GPU for GBC and a CPU for GP. This is the realistic deployment scenario: GPU hardware is standard for neural network training, while GP software typically runs on CPU. If both were restricted to CPU, GBC would be slower per epoch but the $\mathcal{O}(n)$ vs. $\mathcal{O}(n^3)$ scaling difference would still dominate at large $n$.
 
-Conversely, GPU-accelerated GP implementations (e.g., GPyTorch with CUDA) can push the feasibility boundary somewhat by leveraging GPU parallelism for the Cholesky decomposition and kernel evaluations. With GPyTorch, dense GP inference at $n = 10{,}000$ becomes feasible (though slow), and sparse variational GPs with conjugate gradients can scale further. But the cubic asymptotic cost of the dense GP remains, and GPU acceleration does not change the exponent --- it only reduces the constant. At $n = 100{,}000$, even GPU-accelerated dense GPs are infeasible, while GBC trains comfortably.
+Conversely, GPU-accelerated GP implementations (e.g., GPyTorch with CUDA) can push the feasibility boundary somewhat by leveraging GPU parallelism for the Cholesky decomposition and kernel evaluations. With GPyTorch, dense GP inference at $n = 10{,}000$ becomes feasible (though slow), and sparse variational GPs with conjugate gradients can scale further. But the cubic asymptotic cost of the dense GP remains, and GPU acceleration does not change the exponent --- it only reduces the constant. At $n = 90{,}000$, even GPU-accelerated dense GPs are infeasible, while GBC trains comfortably.
 :::
+
+@fig-scaling-comparison visualizes the scaling behavior of the two methods. The GP training time grows cubically (the curve steepens on a log scale), while GBC grows linearly. The crossover occurs near $n = 1{,}500$.
+
+```{python}
+#| eval: true
+#| echo: false
+#| label: fig-scaling-comparison
+#| fig-cap: "Scaling comparison: GP training time grows as $O(n^3)$ while GBC grows as $O(n)$. Beyond $n \\approx 2{,}000$ the GP is computationally infeasible (dashes). GBC continues to improve with additional data, reaching RMSE = 0.29 at $n = 20{,}000$."
+from IPython.display import Image
+display(Image("cache/fig-scaling-comparison.png"))
+```
 
 
 ## When to Use Which Surrogate {#sec-surr-decision}

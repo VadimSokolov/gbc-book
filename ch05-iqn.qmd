@@ -220,7 +220,7 @@ where $L_{\text{pinball}} = \rho_\tau(y - \hat{Q}(\tau \mid x))$ is the standard
 
 Each term plays a distinct role. The pinball loss ($w_1$) is the primary driver: at each training step, we sample a fresh $\tau$ and compute the asymmetric pinball penalty, so over many steps the network sees all quantile levels uniformly and implicitly optimizes the CRPS. The CRPS term ($w_2$) adds an explicit regularizer by sampling a small batch of $\tau$ values (say 16) and averaging their pinball losses, reducing gradient variance compared to using a single $\tau$ per step. The MAE anchor ($w_3$) keeps the median prediction well-calibrated: without it, the network may produce accurate tail quantiles but a poor point forecast, so this term encourages $\hat{Q}(0.5 \mid x) \approx \text{median}(Y \mid X=x)$.
 
-The weights $(0.70, 0.20, 0.10)$ work well as a default. For problems with *jump discontinuities* (see @sec-jumps), a pinball-dominant configuration $(0.70, 0.20, 0.10)$ is preferred because the MAE anchor can pull predictions toward a blended mean near the jump boundary. For smooth, well-behaved functions, equal weights $(0.33, 0.33, 0.34)$ also work well.
+The weights $(0.70, 0.20, 0.10)$ work well as a default across most settings, including problems with jump discontinuities (@sec-jumps), where the pinball-dominant weighting avoids having the MAE anchor pull predictions toward a blended mean near the jump boundary. For smooth, well-behaved functions, equal weights $(0.33, 0.33, 0.34)$ also work well.
 
 The implementation also includes a *monotonicity regularizer*. Since the quantile function must be non-decreasing in $\tau$, we penalize crossings: if $\tau < 0.5$, we penalize cases where the prediction is too high (relative to the median); if $\tau > 0.5$, we penalize cases where it is too low. This is encoded implicitly in the original IQN loss through the asymmetric monotonicity term.
 
@@ -465,7 +465,7 @@ def compute_pit(model, X, y, x_mean, x_std, y_mean, y_std, n_tau=500):
 
 Monitoring the CRPS on a held-out validation set during training serves as a convergence diagnostic. Unlike the training loss --- which combines three terms with potentially conflicting gradients --- the validation CRPS measures the single quantity we care about: how well the predicted quantile function matches the true conditional distribution on unseen data.
 
-A well-behaved training run shows the validation CRPS decreasing rapidly in the first 500--1000 epochs, then leveling off as the network converges. Warning signs include: the CRPS increasing after an initial decrease (overfitting), the CRPS oscillating wildly (learning rate too high or batch size too small), or the CRPS plateauing at a high value (underfitting, possibly due to insufficient model capacity). We show CRPS convergence curves for the motorcycle example below in @sec-iqn-motorcycle.
+A well-behaved training run shows the validation CRPS decreasing rapidly in the first 500--1000 epochs, then leveling off as the network converges. Warning signs include: the CRPS increasing after an initial decrease (overfitting), the CRPS oscillating wildly (learning rate too high or batch size too small), or the CRPS plateauing at a high value (underfitting, possibly due to insufficient model capacity).
 
 ### Quantile Crossing Detection {#sec-iqn-crossing}
 
@@ -700,6 +700,17 @@ cov = compute_coverage(model_moto, X_moto, y_moto, xm, xs, ym, ys)
 nc, mv, fp = detect_crossings(model_moto, X_grid, xm, xs, ym, ys)
 ```
 
+@fig-moto-comparison shows the full comparison between GBC (IQN ensemble with $K = 5$) and hetGP on the motorcycle data, using 50 random 80:20 train/test splits. The prediction bands from both methods capture the heteroscedastic structure, but the GP's symmetric Gaussian intervals are visible in the crash region where the true conditional distribution is asymmetric.
+
+```{python}
+#| eval: true
+#| echo: false
+#| label: fig-moto-comparison
+#| fig-cap: "Motorcycle benchmark: GBC ensemble ($K = 5$) vs. hetGP prediction bands across 50 random splits. Both methods capture the heteroscedastic variance structure. GBC achieves CRPS = 12.49 vs. hetGP CRPS = 12.56."
+from IPython.display import Image
+display(Image("cache/fig-moto-comparison.png"))
+```
+
 
 ## Example: Friedman Function with Heteroscedastic Noise {#sec-iqn-friedman}
 
@@ -714,8 +725,9 @@ $$
 where $\sigma(x) = 1 + 3x$ introduces heteroscedastic noise that grows with $x$. The conditional mean is a smooth sinusoidal curve, but the conditional variance increases linearly across the input domain. A good quantile model should produce narrow prediction bands near $x = 0$ and wide bands near $x = 1$.
 
 ```{python}
-#| eval: false
+#| eval: true
 #| code-fold: false
+#| output: false
 # Generate Friedman 1D data with heteroscedastic noise
 np.random.seed(123)
 n_fried = 200
@@ -733,8 +745,10 @@ print("Friedman model trained.")
 ```
 
 ```{python}
-#| eval: false
+#| eval: true
 #| code-fold: true
+#| label: fig-friedman-iqn
+#| fig-cap: "IQN quantile fan for the 1D Friedman function with heteroscedastic noise. The prediction bands widen as x increases, correctly tracking the growing noise variance sigma(x) = 1 + 3x. The true conditional mean (dashed black) is captured by the median prediction."
 X_grid_f = np.linspace(0.01, 0.99, 300).reshape(-1, 1)
 q_fried, tau_f = predict_quantiles(
     model_fried, X_grid_f, xm_f, xs_f, ym_f, ys_f, n_tau=200
@@ -772,21 +786,12 @@ plt.tight_layout()
 plt.show()
 ```
 
-```{python}
-#| eval: true
-#| echo: false
-#| label: fig-friedman-iqn
-#| fig-cap: "IQN quantile fan for the 1D Friedman function with heteroscedastic noise. The prediction bands widen as x increases, correctly tracking the growing noise variance sigma(x) = 1 + 3x. The true conditional mean (dashed black) is captured by the median prediction."
-from IPython.display import Image
-display(Image("cache/fig-friedman-iqn.png"))
-```
-
-The results in @fig-friedman-iqn confirm that the IQN captures both the smooth mean function and the changing variance. Near $x = 0$, where $\sigma(x) = 1$, the 90% prediction interval is narrow and closely tracks the true 5th and 95th percentiles (red dotted lines). Near $x = 1$, where $\sigma(x) = 4$, the bands widen appropriately. The median prediction (solid blue) aligns closely with the true conditional mean (dashed black), demonstrating that the MAE anchor in the composite loss does its job of keeping the point forecast well-calibrated.
+The results confirm that the IQN captures both the smooth mean function and the changing variance. Near $x = 0$, where $\sigma(x) = 1$, the 90% prediction interval is narrow and closely tracks the true 5th and 95th percentiles (red dotted lines). Near $x = 1$, where $\sigma(x) = 4$, the bands widen appropriately. The median prediction (solid blue) aligns closely with the true conditional mean (dashed black), demonstrating that the MAE anchor in the composite loss does its job of keeping the point forecast well-calibrated.
 
 This example also illustrates a contrast with classical approaches. A standard linear quantile regression would fit parallel lines for each quantile level, completely missing the curvature of the mean function. A Gaussian process with constant noise would produce symmetric prediction bands of constant width, missing the heteroscedasticity. The IQN, by jointly learning the dependence on both $x$ and $\tau$, captures both phenomena simultaneously without any explicit structural assumptions.
 
 ```{python}
-#| eval: false
+#| eval: true
 #| code-fold: true
 # Run diagnostics on the Friedman example
 cov_f = compute_coverage(model_fried, X_fried, y_fried, xm_f, xs_f, ym_f, ys_f)

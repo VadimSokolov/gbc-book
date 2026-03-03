@@ -228,9 +228,9 @@ $$ {#eq-iqn-loss-rl}
 
 The full IQN loss aggregates over $N$ samples of $\tau$ and $N'$ samples of $\tau'$:
 $$
-\mathcal{L}(w) = \frac{1}{N'}\sum_{i=1}^{N} \sum_{j=1}^{N'} \rho^H_{\tau_i}(\delta_{ij}),
+\mathcal{L}(w) = \frac{1}{N \cdot N'}\sum_{i=1}^{N} \sum_{j=1}^{N'} \rho^H_{\tau_i}(\delta_{ij}),
 $$ {#eq-iqn-loss-full}
-where $\delta_{ij} = r + \gamma\,\theta_{\tilde{w}}(x', a^*, \tau'_j) - \theta_w(x, a, \tau_i)$, with $\tau_i \sim \mathrm{Uniform}(0,1)$ independently sampled for the online network and $\tau'_j \sim \mathrm{Uniform}(0,1)$ for the target network. In practice, $N = N' = 64$ is a common choice.
+where $\delta_{ij} = r + \gamma\,\theta_{\tilde{w}}(x', a^*, \tau'_j) - \theta_w(x, a, \tau_i)$, with $\tau_i \sim \mathrm{Uniform}(0,1)$ independently sampled for the online network and $\tau'_j \sim \mathrm{Uniform}(0,1)$ for the target network. In practice, $N = N' = 64$ is a common choice. (Some implementations normalize by $N'$ only, absorbing the $1/N$ factor into the learning rate; the minimizer is unchanged.)
 
 The table below summarizes the evolution.
 
@@ -296,7 +296,13 @@ for ep in range(n_episodes):
             j = np.random.randint(n_quantiles)
             target = reward + gamma * theta[next_state, j]
             delta = target - theta[state, i]
-            # Pinball gradient
+            # Pinball gradient: note the update depends only on the
+            # *sign* of delta, not its magnitude. This is correct ---
+            # the pinball loss gradient is the piecewise-constant
+            # function tau (if delta >= 0) or tau - 1 (if delta < 0).
+            # Unlike MSE, which pushes harder for larger errors,
+            # quantile regression pushes at constant strength and
+            # steers via asymmetric weighting of over- vs undershoot.
             if delta >= 0:
                 grad = taus[i]
             else:
@@ -363,6 +369,14 @@ plt.show()
 print(f"Learned mean return (state A): {theta[0].mean():.3f}")
 print(f"MC mean return (state A): {mc_returns.mean():.3f}")
 print(f"Learned std (state A): {np.std(np.diff(theta[0])):.4f}")
+```
+
+```{python}
+#| eval: true
+#| echo: false
+# Display cached output from the QTD learning code above
+with open("cache/fig-qtd-twostate-output.txt") as f:
+    print(f.read().strip())
 ```
 
 ```{python}
@@ -514,7 +528,7 @@ In distributional RL, the noise outsourcing representation applies to the return
 $$
 Z(x, a) = G^*(U, x, a), \quad U \sim \text{Uniform}(0,1),
 $$
-where $G^*(\tau, x, a) = F_{Z(x,a)}^{-1}(\tau)$ is the quantile function of the return distribution. The return distributions satisfy $Z^\star(x,a) \overset{d}{=} R + \gamma Z^\star(X', A')$ under the optimal policy. In the quantile representation, this means $G^\star(\tau, x, a)$ is the $\tau$-th quantile of the return distribution, but the quantile fixed-point cannot be written as $G^\star(\tau, x, a) = R + \gamma G^\star(\tau', x', a')$ with independent $\tau, \tau'$, because the distributional equality does not distribute across independent uniform arguments. See @bellemare2023distributional [Prop. 4.14] for the correct formulation. The IQN learns the quantile function of the fixed-point distribution by quantile regression against Bellman targets.
+where $G^*(\tau, x, a) = F_{Z(x,a)}^{-1}(\tau)$ is the quantile function of the return distribution. The return distributions satisfy $Z^\star(x,a) \overset{d}{=} R + \gamma Z^\star(X', A')$ under the optimal policy. In the quantile representation, this means $G^\star(\tau, x, a)$ is the $\tau$-th quantile of the return distribution, but the quantile fixed-point cannot be written as $G^\star(\tau, x, a) = R + \gamma G^\star(\tau', x', a')$ with independent $\tau, \tau'$, because the distributional equality does not distribute across independent uniform arguments. The correct relation is that $G^\star(\tau, x, a)$ equals the $\tau$-th quantile of the *mixture* $R + \gamma Z^\star(X', A')$, where the mixing is over both the stochastic reward and transition; equivalently, $G^\star(\cdot, x, a) = F^{-1}_{R + \gamma Z^\star(X', A')}(\cdot)$, which couples all sources of randomness before inverting, rather than composing independent quantile maps. See @bellemare2023distributional [Prop. 4.14] for the formal statement. The IQN learns the quantile function of the fixed-point distribution by quantile regression against Bellman targets.
 
 The distributional Bellman equation, viewed through the lens of noise outsourcing, is a fixed-point equation for the quantile function $G^*$. The IQN in the RL setting learns this fixed point by iterating the Bellman operator in quantile space. The GBC framework simply removes the Bellman recursion and learns $G^*$ directly from supervised data:
 $$

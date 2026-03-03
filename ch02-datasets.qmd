@@ -125,7 +125,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-GBC-Aug matches MJGP on CRPS (0.009 vs. 0.010) while improving RMSE by 17% (0.044 vs. 0.053), training in ~23 seconds per replicate on GPU versus over 600 seconds for MJGP on CPU.
+GBC-Aug slightly outperforms MJGP on CRPS (0.009 vs. 0.010) while improving RMSE by 17% (0.044 vs. 0.053), training in ~23 seconds per replicate on GPU versus over 600 seconds for MJGP on CPU.
 
 ### Star Function {#sec-data-star}
 
@@ -234,7 +234,7 @@ with $k_{\text{SE}}$ using length scale $\ell = 0.1d$ and additive noise $\varep
 ```{python}
 #| eval: true
 #| code-fold: true
-#| fig-cap: "One realization of the BGP test function in $d = 2$. The dashed line shows the random partition boundary $a^\\top x = 0$. The two GP regimes have means 0 and 13, creating a visible jump."
+#| fig-cap: "One realization of the BGP test function in $d = 2$ with $a = (1, -1)$. The dashed line shows the partition boundary $a^\\top x = 0$ (i.e., $x_1 = x_2$). The two GP regimes have means 0 and 13, creating a visible jump."
 #| label: fig-data-bgp
 import numpy as np
 import matplotlib.pyplot as plt

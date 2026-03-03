@@ -4,7 +4,7 @@ Throughout this book, we have presented the Implicit Quantile Network as a versa
 
 This chapter is about when that temptation leads you astray.
 
-We document a systematic failure of IQN on a real forecasting task --- lake temperature prediction --- where the response surface has high signal-to-noise ratio (SNR). In this regime, the IQN's multiplicative $\tau$-embedding architecture collapses: all quantile levels converge to the same well-fitted conditional mean, and prediction intervals shrink to near-zero width. Coverage at the 90% nominal level drops to 10--34%. Increasing model capacity makes the problem *worse*, not better.
+We document a systematic failure of IQN on a real forecasting task --- lake temperature prediction --- where the response surface has high signal-to-noise ratio (SNR). In this regime, the IQN's multiplicative $\tau$-embedding architecture collapses: all quantile levels converge to the same well-fitted conditional mean, and prediction intervals shrink to near-zero width. Coverage at the 90% nominal level drops to 11--34%. Increasing model capacity makes the problem *worse*, not better.
 
 The remedy is a two-part strategy. First, we replace IQN with a *heteroscedastic MLP ensemble* trained with Gaussian negative log-likelihood, which explicitly parameterizes both the conditional mean and variance. Second, we apply *conformal calibration* via temporal cross-validation to produce distribution-free prediction intervals with honest coverage. The combination --- which we call the GBC calibration pipeline --- achieves 90.2% coverage on the lake temperature benchmark while reducing RMSE by 7.1% relative to a three-stage Gaussian process baseline.
 
@@ -51,7 +51,15 @@ $$
 \phi_\theta(\tau) \approx \mathbf{c} + \epsilon(\tau), \quad \|\epsilon(\tau)\| \ll \|\mathbf{c}\|.
 $$ {#eq-cal-phi-approx}
 
-The perturbation $\epsilon(\tau)$ does all the distributional work: it creates the difference between $\hat{Q}(0.05 \mid x)$ and $\hat{Q}(0.95 \mid x)$. But the gradient of $\epsilon(\tau)$ must fight against the dominant gradient from the constant part $\mathbf{c}$, which drives $\psi_\theta(x) \odot \mathbf{c}$ toward the conditional mean. In the loss landscape, the direction that improves the mean fit (adjusting $\psi_\theta$ and $\mathbf{c}$) has gradient magnitude proportional to the signal strength, while the direction that increases distributional spread (adjusting $\epsilon(\tau)$) has gradient magnitude proportional to the noise level $\sigma$. When $\mathrm{SNR} = \mathrm{Var}(\mu(X))/\sigma^2 \gg 1$, the distributional gradient is swamped. Concretely, on the lake data with $\mathrm{SNR} \approx 470$, the mean-fit gradient is roughly $\sqrt{470} \approx 22$ times larger than the spread gradient, making it nearly impossible for SGD to allocate learning capacity to the distributional component. (Here we use the range-based approximation $\mathrm{SNR} \approx (\text{range}/\sigma)^2 \approx 470$ as a heuristic; the formal $\mathrm{SNR} = \mathrm{Var}(\mu(X))/\sigma^2$ would give a more precise estimate.)
+The perturbation $\epsilon(\tau)$ does all the distributional work: it creates the difference between $\hat{Q}(0.05 \mid x)$ and $\hat{Q}(0.95 \mid x)$. But the gradient of $\epsilon(\tau)$ must fight against the dominant gradient from the constant part $\mathbf{c}$, which drives $\psi_\theta(x) \odot \mathbf{c}$ toward the conditional mean. In the loss landscape, the direction that improves the mean fit (adjusting $\psi_\theta$ and $\mathbf{c}$) has gradient magnitude proportional to the signal strength, while the direction that increases distributional spread (adjusting $\epsilon(\tau)$) has gradient magnitude proportional to the noise level $\sigma$. When the signal-to-noise ratio is large, the distributional gradient is swamped. Throughout this chapter we use the *range-based* SNR as a practical diagnostic:
+$$
+\mathrm{SNR}_{\text{range}} = \left(\frac{\text{range of } y}{\hat\sigma_{\text{residual}}}\right)^2,
+$$ {#eq-cal-snr}
+which is easy to compute from data. On the lake data, $\mathrm{SNR}_{\text{range}} \approx (26/1.2)^2 \approx 470$, so the mean-fit gradient is roughly $\sqrt{470} \approx 22$ times larger than the spread gradient, making it nearly impossible for SGD to allocate learning capacity to the distributional component.
+
+::: {.callout-note}
+The formal variance-based definition $\mathrm{SNR} = \mathrm{Var}(\mu(X))/\sigma^2$ requires knowledge of the true conditional mean $\mu(x)$, which is unavailable before fitting the model. The range-based proxy @eq-cal-snr is an upper bound (range $\geq 2\,\mathrm{sd}$) and is conservative: if $\mathrm{SNR}_{\text{range}}$ is large, the variance-based SNR is also large.
+:::
 
 There is a second, more insidious mechanism that reinforces the first. Suppose the network has learned the conditional mean well, so that $\hat{Q}(\tau \mid x) \approx \mu(x)$ for all $\tau$. The residual $y - \hat{Q}(\tau \mid x) \approx y - \mu(x) = \epsilon$ is independent of $\tau$. The indicator $\mathbf{1}[y < \hat{Q}(\tau \mid x)]$ then does not vary with $\tau$ for a given $(x, y)$ pair: it is always 0 or always 1 depending on the sign of $\epsilon$. The gradient signal $\tau - \mathbf{1}[\cdot]$ that should push different quantile levels apart becomes effectively constant across $\tau$, and the quantile encoder receives no informative gradient about how to differentiate the quantile levels. This is the *gradient collapse*: the very success of the mean fit eliminates the gradient signal that would produce distributional spread.
 
@@ -73,13 +81,13 @@ where $\hat{\sigma}_{\text{residual}}$ is the standard deviation of the IQN's me
 
 The gradient collapse manifests dramatically on real data. We encountered this failure on the *Falling Creek Reservoir* lake temperature forecasting task [@holthuijzen2025synthesizing]. The dataset consists of $N = 281{,}764$ records with 6 input features (day of year, water depth, forecast horizon, a lagged temperature covariate, and two outputs from a physics-based lake simulator) predicting observed water temperature. The response surface is smooth and highly predictable: the physics-based simulator already captures most of the variance, and the statistical model's job is to refine the simulator's output and quantify residual uncertainty.
 
-To quantify the SNR on this dataset: the total range of observed temperatures is approximately 4--30${}^\circ$C (a range of 26${}^\circ$C), and the standard deviation of the best residuals (after a well-fitted MLP) is approximately $1.2\,{}^{\circ}$C. The SNR is roughly $(26 / 1.2)^2 \approx 470$ in range-to-noise ratio, or about 22:1 in standard-deviation terms. This is well above the 10:1 threshold we suggested for IQN failure.
+To quantify the SNR on this dataset: the total range of observed temperatures is approximately 4--30${}^\circ$C (a range of 26${}^\circ$C), and the standard deviation of the best residuals (after a well-fitted MLP) is approximately $1.2\,{}^{\circ}$C. Using @eq-cal-snr, $\mathrm{SNR}_{\text{range}} \approx (26/1.2)^2 \approx 470$, or equivalently $\sqrt{\mathrm{SNR}_{\text{range}}} \approx 22$ in standard-deviation terms. This is well above the 10:1 threshold (in sd terms) we suggested for IQN failure.
 
 We tested three IQN variants. The *standard IQN* (256$\times$3, 3000 epochs) achieved RMSE $= 1.310\,{}^{\circ}$C --- competitive with the GP baseline --- but the 90% prediction interval coverage was only *34%*, with an average PI width of just $1.0\,{}^{\circ}$C; the network learned an excellent point prediction and negligible distributional spread. The *larger IQN* (512$\times$4, 8000 epochs) performed worse on both fronts: RMSE $= 1.404\,{}^{\circ}$C and coverage dropped to *11%*, because more capacity allowed the covariate encoder to fit the mean more tightly, leaving even less room for $\tau$-modulation. The *two-stage MLP + IQN* (first stage: MLP for mean; second stage: IQN on residuals) reduced stage 1 RMSE to $1.281\,{}^{\circ}$C but coverage remained at only *29%* --- even operating on residuals, the multiplicative architecture could not produce enough spread.
 
 All three variants produce reasonable point predictions but catastrophically miscalibrated prediction intervals. The 90% PI width should be roughly $\pm 1.645 \sigma$ around the mean; on this data, the required $\sigma \approx 1.1\,{}^{\circ}$C, implying a PI width of $\approx 3.6\,{}^{\circ}$C. The IQN's actual width of $1.0\,{}^{\circ}$C is a factor of 3.6 too narrow. The IQN's 90% prediction interval captures only about one-third of the observations it should, making the uncertainty estimate useless for decision-making. A reservoir manager relying on these intervals would be systematically surprised by observations outside the predicted range, which could lead to inappropriate operational decisions --- for example, failing to prepare for temperature exceedances that trigger algal blooms because the model predicted narrow intervals suggesting stable conditions.
 
-This failure mode provides a useful diagnostic. Before committing to IQN for a new problem, check the *signal-to-noise ratio*: compute the ratio of the total response range (or standard deviation) to the expected residual standard deviation after fitting a good point predictor. If this ratio is large --- say greater than 10:1 --- the IQN's multiplicative $\tau$-architecture will likely under-disperse. The symptoms are coverage far below nominal (e.g., 30--50% at a 90% target), PI width that does not grow with the nominal coverage level (so that 80% and 95% PIs have nearly the same width), and a pattern where increasing model capacity makes coverage *worse*, not better.
+This failure mode provides a useful diagnostic. Before committing to IQN for a new problem, compute $\mathrm{SNR}_{\text{range}}$ from @eq-cal-snr after fitting a quick point predictor. If $\sqrt{\mathrm{SNR}_{\text{range}}}$ is large --- say greater than 10 --- the IQN's multiplicative $\tau$-architecture will likely under-disperse. The symptoms are coverage far below nominal (e.g., 30--50% at a 90% target), PI width that does not grow with the nominal coverage level (so that 80% and 95% PIs have nearly the same width), and a pattern where increasing model capacity makes coverage *worse*, not better.
 
 When you see these symptoms, switch to a parametric variance model. The remainder of this chapter develops that alternative.
 
@@ -87,7 +95,7 @@ Contrast this failure with the IQN's success on the motorcycle data (@sec-iqn-mo
 
 The following table summarizes the diagnostic across our main benchmarks, ordered by decreasing distributional complexity. As the conditional distribution becomes simpler and the SNR increases, the IQN's advantage disappears and eventually reverses.
 
-| Dataset | SNR (approx.) | Distributional structure | IQN coverage | Het-MLP + conformal |
+| Dataset | $\sqrt{\mathrm{SNR}_{\text{range}}}$ | Distributional structure | IQN coverage | Het-MLP + conformal |
 |:--------|:-------------:|:------------------------|:------------:|:-------------------:|
 | Phantom | 3:1 | Bimodal | 91% | Not needed |
 | Motorcycle | 4:1 | Heavy-tailed, heteroscedastic | 89% | Not needed |
@@ -141,6 +149,8 @@ The following code implements the architecture.
 import torch
 import torch.nn as nn
 import numpy as np
+
+torch.manual_seed(42)
 
 class HetMLP(nn.Module):
     """Heteroscedastic MLP with mean and log-variance heads."""
@@ -620,6 +630,17 @@ ax2.set_ylim(0.75, 1.0)
 
 plt.tight_layout()
 plt.show()
+```
+
+@fig-lake-forecast shows representative forecast trajectories, illustrating how the prediction intervals widen with horizon while the point predictions remain well-calibrated.
+
+```{python}
+#| eval: true
+#| echo: false
+#| label: fig-lake-forecast
+#| fig-cap: "Lake temperature forecast comparison: GBC calibration pipeline predictions with conformal prediction intervals at representative depths and dates. The intervals widen with forecast horizon, reflecting the per-horizon conformal quantiles from @eq-cal-per-horizon-q."
+from IPython.display import Image
+display(Image("cache/fig-lake-forecast.png"))
 ```
 
 The comparison is not fully symmetric. GPBC is *refit daily* with observations through each forecast date, while our neural network is trained *once* on pre-validation data and never sees validation-period observations. This gives GPBC a substantial information advantage, particularly at short horizons where recent observations are highly predictive.

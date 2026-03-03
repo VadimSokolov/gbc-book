@@ -1,0 +1,7 @@
+hetgp_crps = 12.5557
+hetgp_crps_se = 0.2383
+gbc_ens_rmse = 23.8817
+gbc_ens_rmse_se = 0.5665
+gbc_ens_crps = 12.4893
+gbc_ens_crps_se = 0.2855
+gbc_ens_cov = 0.8300

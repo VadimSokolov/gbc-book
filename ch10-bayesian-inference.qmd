@@ -92,6 +92,17 @@ The following table summarizes the comparison:
 
 : Comparison of ABC and GBC for likelihood-free inference. Here $\beta$ is the smoothness of the posterior quantile function and $k^*$ is the effective dimension exploited by the deep network. {#tbl-abc-vs-gbc}
 
+@fig-abc-comparison visualizes this contrast on a concrete example: GBC produces sharp posterior estimates from the same simulation budget where ABC must either accept very few samples (small $\varepsilon$) or accept a biased posterior (large $\varepsilon$).
+
+```{python}
+#| eval: true
+#| echo: false
+#| label: fig-abc-comparison
+#| fig-cap: "ABC vs. GBC posterior approximations. ABC (left panels) at decreasing tolerance $\\varepsilon$ requires exponentially more simulations for diminishing bias reduction. GBC (right) learns the posterior quantile function from the same simulated dataset, producing sharp posterior samples via a single forward pass."
+from IPython.display import Image
+display(Image("cache/fig-abc-comparison.png"))
+```
+
 The shift from ABC to GBC is analogous to the shift from $k$-nearest-neighbors regression to deep learning in supervised learning. Both estimate the same conditional distribution, but the latter exploits global structure and compositional representations that local methods miss. Just as a deep network can learn that "images of cats" live on a low-dimensional manifold in pixel space, GBC learns that posterior samples live on a low-dimensional manifold in the joint space of parameters and summary statistics. The network discovers this manifold from the training data, without the modeler having to specify it.
 
 One can also view the transition from ABC to GBC through the lens of information efficiency. ABC uses each simulation exactly once: a simulation is either close enough to the observation (accepted) or not (discarded). GBC uses each simulation as a training example that updates the network weights via gradient descent. A simulation that is far from any particular observation still provides useful information about the global structure of the posterior mapping --- it tells the network what the posterior looks like in a different region of summary-statistic space. This global information sharing is what allows GBC to achieve high accuracy with orders of magnitude fewer simulations than ABC.
@@ -663,7 +674,18 @@ that we can run forward, but no density that we can evaluate.
 
 The GBC approach proceeds as follows. We use the training set from @fadikar2018calibrating, which consists of $m = 100$ parameter scenarios generated via a space-filling Latin hypercube design, with 100 replicate simulations per scenario, for a total of $N = 10{,}000$ epidemic trajectories. For summary statistics, we follow @fadikar2018calibrating and use five quantile-based trajectory summaries (the 5th, 27.5th, 50th, 72.5th, and 95th percentile trajectories), indexed by a sixth latent variable $\alpha \in [0, 1]$ that captures the within-scenario variability. We train five independent IQNs, one for each of the five input parameters $\theta_j$, conditioned on the summary statistic vector $z = S(y_{\text{obs}})$.
 
-The results, described in detail by @polson2024generative, demonstrate that GBC recovers credible posterior intervals for all five parameters across three held-out test scenarios (labeled A, B, and C in the original challenge). The posterior for the transmission probability $\theta_1$ exhibits the expected bimodality in scenarios where the observed trajectory is ambiguous --- consistent with either a high-transmission, early-intervention regime or a moderate-transmission, late-intervention regime. The posterior for the initial infected count $\theta_2$ concentrates near the true value when the early-phase trajectory is informative, and spreads broadly when it is not. GBC's predictions for the lower quantile trajectories ($\alpha = 0.05$ and $\alpha = 0.275$) show particular improvement over the Gaussian process emulator of @fadikar2018calibrating, with tighter 90\% credible intervals that still capture the observed quantiles.
+The results, described in detail by @polson2024generative, demonstrate that GBC recovers credible posterior intervals for all five parameters across three held-out test scenarios (labeled A, B, and C in the original challenge). @fig-ebola-preds shows the GBC quantile predictions overlaid on the observed epidemic trajectory, with the shaded bands representing the learned predictive uncertainty.
+
+```{python}
+#| eval: true
+#| echo: false
+#| label: fig-ebola-preds
+#| fig-cap: "GBC predictions for the Ebola ABM across three held-out scenarios. Shaded bands show the 90% prediction intervals from the IQN, with the median prediction (solid line) tracking the observed cumulative incidence (dots). The varying band widths reflect the IQN's learned uncertainty, which is wider during rapid epidemic growth."
+from IPython.display import Image
+display(Image("cache/fig-ebola-preds.png"))
+```
+
+The posterior for the transmission probability $\theta_1$ exhibits the expected bimodality in scenarios where the observed trajectory is ambiguous --- consistent with either a high-transmission, early-intervention regime or a moderate-transmission, late-intervention regime. The posterior for the initial infected count $\theta_2$ concentrates near the true value when the early-phase trajectory is informative, and spreads broadly when it is not. GBC's predictions for the lower quantile trajectories ($\alpha = 0.05$ and $\alpha = 0.275$) show particular improvement over the Gaussian process emulator of @fadikar2018calibrating, with tighter 90\% credible intervals that still capture the observed quantiles.
 
 A subtle but important design choice in the Ebola application is the use of the sixth latent variable $\alpha$. Because the ABM is stochastic, running it twice with the same five parameters produces different trajectories. Rather than treating each replicate as an independent observation, @fadikar2018calibrating summarizes the 100 replicates at each parameter setting by five empirical quantiles (the 5th, 27.5th, 50th, 72.5th, and 95th percentiles of the cumulative incidence at each week). The quantile index $\alpha$ is then treated as an additional continuous input, so the IQN learns a mapping from $(\theta_1, \ldots, \theta_5, \alpha) \mapsto y_{\alpha}(\text{week})$. This handles the within-scenario variability without discarding the information it carries about the tails of the output distribution.
 
@@ -688,7 +710,18 @@ We use the dataset of one million simulation runs for the Hubble Space Telescope
 
 The architecture for the satellite drag problem is slightly different from the simple IQN used in the normal-normal example. Because the input space is 7-dimensional and the response surface is smooth but nonlinear, we use a deeper network with three hidden layers of width 256, trained with the Adam optimizer using a batch size of 2048 and 200 epochs. The cosine embedding for $\tau$ uses $M = 64$ frequency components, which provides sufficient spectral resolution for the smooth posterior quantile function. Training on 200,000 data points (20\% of the million available) takes about 10 minutes on a single GPU --- comparable to the time required to fit a single GP model with far fewer data points.
 
-The out-of-sample results are consistent with expectations. The error histogram (the distribution of $\hat{y} - y$ for held-out observations) is approximately Gaussian and centered at zero, with some mild left-tail heaviness indicating occasional underestimates. The scatter plot of predicted versus observed drag coefficients hugs the diagonal, with the model being most accurate for smaller drag coefficient values and slightly less precise at the extremes. The posterior predictive distributions concentrate tightly around the observed drag coefficients, confirming that GBC handles smooth problems gracefully. When we examine individual out-of-sample predictions, the 95\% credible intervals capture the true drag coefficient reliably, with the interval width reflecting genuine uncertainty about the gas-surface interaction physics.
+@fig-satellite-yhat shows the out-of-sample predicted vs. observed scatter plot. The results are consistent with expectations. The error histogram (the distribution of $\hat{y} - y$ for held-out observations) is approximately Gaussian and centered at zero, with some mild left-tail heaviness indicating occasional underestimates. The scatter plot of predicted versus observed drag coefficients hugs the diagonal, with the model being most accurate for smaller drag coefficient values and slightly less precise at the extremes.
+
+```{python}
+#| eval: true
+#| echo: false
+#| label: fig-satellite-yhat
+#| fig-cap: "Satellite drag coefficient: GBC predicted vs. observed values on 800,000 held-out test points. The predictions closely track the diagonal, with RMSE = 0.098 and CRPS = 0.05, competitive with the best GP models at a fraction of the computational cost."
+from IPython.display import Image
+display(Image("cache/fig-satellite-yhat.png"))
+```
+
+The posterior predictive distributions concentrate tightly around the observed drag coefficients, confirming that GBC handles smooth problems gracefully. When we examine individual out-of-sample predictions, the 95\% credible intervals capture the true drag coefficient reliably, with the interval width reflecting genuine uncertainty about the gas-surface interaction physics.
 
 The satellite drag example serves as a sanity check, but it also illustrates a subtlety about the relationship between surrogates and inference. In @sec-surrogates, we used IQN surrogates to predict the output $y$ given the input $\theta$ --- that is, to learn the forward map $\theta \mapsto y$. Here, the problem is inverted: given an observed drag coefficient $y_{\text{obs}}$, we want the posterior over the input parameters $\theta$. The two problems are related by Bayes' theorem, and GBC handles both with the same algorithmic template. The only difference is which variable is the "parameter" and which is the "data." For the surrogate problem, $\theta$ is the input and $y$ is the output; for the inference problem, $y$ is the conditioning variable and $\theta$ is the target. The IQN architecture is the same in both cases --- only the roles of the variables change.
 

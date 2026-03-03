@@ -229,7 +229,7 @@ This says that the conformal calibration property cannot arise from any Bayesian
 
 Consider the space of all predictive kernels $K : \mathcal{X}^n \times \mathcal{X} \to \Delta(\mathbb{R})$, where $\Delta(\mathbb{R})$ is the set of probability measures on $\mathbb{R}$. Let $\mathcal{B}$ denote the set of predictive kernels arising from some Bayesian model (prior + likelihood), and let $\mathcal{C}$ denote the set arising from some conformal procedure with valid coverage.
 
-Under appropriate topologies (e.g., total variation on the predictive measures, uniform convergence over $\mathcal{X}$), the intersection $\mathcal{B} \cap \mathcal{C}$ is *Baire meagre* (a countable union of nowhere-dense sets). Topologically, this means the set of predictive distributions that are *both* Bayesian and conformally calibrated is negligible --- a zero-measure-like concept in a topological setting.
+Under appropriate topologies (e.g., total variation on the predictive measures, uniform convergence over $\mathcal{X}$), one can show that the intersection $\mathcal{B} \cap \mathcal{C}$ is *Baire meagre* (a countable union of nowhere-dense sets); the argument follows from the rigidity of the exchangeable rank condition and the smoothness of Bayesian updating [see the discussion in @vovk2005algorithmic, Ch. 8]. Topologically, this means the set of predictive distributions that are *both* Bayesian and conformally calibrated is negligible --- a zero-measure-like concept in a topological setting.
 
 The meagre intersection result is the strongest of the four separations because it is a genericity claim, not just an existence claim: the two frameworks disagree almost everywhere. The few cases where they agree --- such as the uniform distribution on a finite set --- are mathematical curiosities, not representative of real prediction problems.
 
@@ -322,7 +322,7 @@ The GBC framework learns this distortion from simulated data --- without ever be
 ```{python}
 #| eval: true
 #| label: fig-pred-wang
-#| fig-cap: "Wang distortion for the normal-normal model. Left: prior (dashed) and predictive (solid) densities. Right: the distortion function $g$ mapping prior survival probabilities to posterior survival probabilities. The S-shaped distortion concentrates belief around the posterior mean."
+#| fig-cap: "Wang distortion for the normal-normal model. Left: prior (dashed) and posterior (solid) densities of $\\theta$. Right: the distortion function $g$ mapping prior survival probabilities to posterior survival probabilities. The S-shaped distortion concentrates belief around the posterior mean."
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import stats
@@ -349,18 +349,16 @@ lam = alpha0 * lam1 * (s - n * mu0) / t
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 
-# Left: prior and predictive densities
+# Left: prior and posterior densities of theta
 theta_grid = np.linspace(-15, 15, 300)
-# predictive = N(mu_star, sigma^2 + sigma_star^2)
-pred_var = sigma**2 + sigma_star**2
 ax1.plot(theta_grid, stats.norm.pdf(theta_grid, mu0, alpha0),
          'b--', lw=1.5, label=f'Prior $N({mu0}, {alpha0}^2)$')
-ax1.plot(theta_grid, stats.norm.pdf(theta_grid, mu_star, np.sqrt(pred_var)),
-         'r-', lw=2, label=f'Predictive $N({mu_star:.1f}, {pred_var:.1f})$')
+ax1.plot(theta_grid, stats.norm.pdf(theta_grid, mu_star, sigma_star),
+         'r-', lw=2, label=f'Posterior $N({mu_star:.1f}, {sigma_star:.2f}^2)$')
 ax1.axvline(theta_true, color='gray', ls=':', lw=1, label=f'$\\theta = {theta_true}$')
 ax1.set_xlabel('$\\theta$')
 ax1.set_ylabel('Density')
-ax1.set_title('Prior and predictive densities')
+ax1.set_title('Prior and posterior densities')
 ax1.legend(fontsize=8)
 
 # Right: Wang distortion function
@@ -630,7 +628,7 @@ def kernel_quantile(X_tr, Y_tr, X_te, tau, bandwidth=None):
     """Nadaraya-Watson kernel quantile estimator."""
     n, d = X_tr.shape
     if bandwidth is None:
-        bandwidth = 1.06 * X_tr.std() * n ** (-1.0 / (d + 4))  # Silverman
+        bandwidth = 1.06 * X_tr.std(axis=0).mean() * n ** (-1.0 / (d + 4))  # Silverman
     preds = []
     for x in X_te:
         dists = np.sum((X_tr - x)**2, axis=1)

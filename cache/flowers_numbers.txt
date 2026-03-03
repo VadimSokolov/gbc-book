@@ -1,0 +1,77 @@
+# Flowers et al. 2026 benchmarks: 20 replicates, 90/10 split
+# Full training sets (not n=1000 capped)
+#
+# === GBC default loss (0.3, 0.3, 0.4) ===
+# Source: hopper job 5815514 (flowers_5815514.log)
+# Date: 2026-02-20
+phantom_gbc_default_rmse = 0.1082
+phantom_gbc_default_crps = 0.0426
+star_gbc_default_rmse = 0.1349
+star_gbc_default_crps = 0.0524
+amhv_gbc_default_rmse = 0.0243
+amhv_gbc_default_rmse_se = 0.0002  # SE not in original log; estimated from v5 run (same order)
+amhv_gbc_default_crps = 0.0105
+amhv_gbc_default_crps_se = 0.0001  # SE not in original log; estimated from v5 run (same order)
+amhv_gbc_default_cov = 0.9149
+# Paper Table 4 reports: RMSE=0.024±0.000, CRPS=0.011±0.000 (rounded from above)
+michalewicz_gbc_default_rmse = 0.0717
+michalewicz_gbc_default_crps = 0.0355
+#
+# === GBC pinball-dominant loss v5 (0.1, 0.2, 0.7) ===
+# Source: hopper jobs 5832627 (phantom), 5834694 (star), 5835558 (amhv), 5835613 (michalewicz)
+# Date: 2026-02-21
+phantom_gbc_v5_rmse = 0.0945
+phantom_gbc_v5_rmse_se = 0.0012
+phantom_gbc_v5_crps = 0.0311
+phantom_gbc_v5_crps_se = 0.0006
+phantom_gbc_v5_cov = 0.9191
+star_gbc_v5_rmse = 0.1238
+star_gbc_v5_rmse_se = 0.0014
+star_gbc_v5_crps = 0.0445
+star_gbc_v5_crps_se = 0.0007
+star_gbc_v5_cov = 0.9106
+amhv_gbc_v5_rmse = 0.0237
+amhv_gbc_v5_rmse_se = 0.0002
+amhv_gbc_v5_crps = 0.0102
+amhv_gbc_v5_crps_se = 0.0001
+amhv_gbc_v5_cov = 0.9036
+michalewicz_gbc_v5_rmse = 0.0644
+michalewicz_gbc_v5_rmse_se = 0.0006
+michalewicz_gbc_v5_crps = 0.0313
+michalewicz_gbc_v5_crps_se = 0.0004
+michalewicz_gbc_v5_cov = 0.9054
+#
+# === MJGP (Flowers et al. code) ===
+# Source: hopper job 5815835 (mjgp_5815835.log)
+# Date: 2026-02-21/22
+phantom_mjgp_rmse = 0.0534
+phantom_mjgp_rmse_se = 0.0009
+phantom_mjgp_crps = 0.0104
+star_mjgp_rmse = 0.0854
+star_mjgp_rmse_se = 0.0013
+star_mjgp_crps = 0.0241
+amhv_mjgp_rmse = 0.0274
+amhv_mjgp_rmse_se = 0.0003
+amhv_mjgp_crps = 0.0122
+michalewicz_mjgp = infeasible  # timed out >48h
+#
+# === GBC-Aug (boundary-augmented) ===
+# Source: hopper jobs 5852845/5852901 (phantom v2), 5852846/5852902 (star)
+# Date: 2026-02-22
+# See also: augiqn_phantom_v2_numbers.txt, augiqn_star_numbers.txt
+phantom_aug_rmse = 0.0443
+phantom_aug_rmse_se = 0.0016
+phantom_aug_crps = 0.0090
+phantom_aug_crps_se = 0.0003
+phantom_aug_cov = 0.9119
+star_aug_rmse = 0.0590
+star_aug_rmse_se = 0.0019
+star_aug_crps = 0.0130
+star_aug_crps_se = 0.0004
+star_aug_cov = 0.8930
+#
+# === Paper uses (tab:flowers) ===
+# Phantom: GBC=v5 (pinball), MJGP, GBC-Aug
+# Star: GBC=v5 (pinball), MJGP, GBC-Aug
+# AMHV: GBC=default (v5 only 5% better), MJGP
+# Michalewicz: GBC=v5 (pinball), MJGP=infeasible

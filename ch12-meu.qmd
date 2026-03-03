@@ -203,7 +203,7 @@ g(p) = \Phi\left(\lambda_1 \Phi^{-1}(p) + \lambda_0\right),
 $$ {#eq-wang-distortion-meu}
 where $\Phi$ is the standard normal CDF and $\lambda_1 > 0$, $\lambda_0 \in \mathbb{R}$ are parameters. This family is closed under composition, maps $[0,1]$ to $[0,1]$, and includes the identity ($\lambda_1 = 1$, $\lambda_0 = 0$) as a special case.
 
-In the normal-normal conjugate model, Bayesian updating is exactly a Wang distortion: the posterior CDF is $g$ composed with the prior CDF, where $\lambda_1 = \alpha/\sigma_*$ and $\lambda_0 = (\mu_* - \mu_0)/\sigma_*$ (see the derivation in @sec-bi-normal, @eq-wang-distortion). The distortion steepens the CDF when data are informative ($\lambda_1 > 1$) and shifts it when the posterior mean differs from the prior mean ($\lambda_0 \neq 0$). The IQN learns this distortion from simulated data.
+In the normal-normal conjugate model, Bayesian updating is exactly a Wang distortion: the posterior CDF is $g$ composed with the prior CDF, where $\lambda_1 = \sigma_0/\sigma_n$ and $\lambda_0 = (\mu_0 - \mu_n)/\sigma_n$ (see the derivation in @sec-bi-normal, @eq-wang-distortion), with $\sigma_0$ the prior std, $\mu_n$ and $\sigma_n$ the posterior mean and std. The distortion steepens the CDF when data are informative ($\lambda_1 > 1$) and shifts it when the posterior mean differs from the prior mean ($\lambda_0 \neq 0$). The IQN learns this distortion from simulated data.
 
 Let us illustrate the Wang distortion for a concrete normal-normal model.
 
@@ -313,7 +313,7 @@ The GBC framework exploits the identity @eq-parzen-identity by introducing indep
 $$
 \{(\theta^{(i)}, y^{(i)}, u^{(i)})\}_{i=1}^N.
 $$
-The noise outsourcing theorem (see @sec-quantiles) guarantees the existence of a function $H$ such that
+The noise outsourcing theorem (see @sec-noise-outsourcing) guarantees the existence of a function $H$ such that
 $$
 \theta \mid y \stackrel{d}{=} H(S(y), u),
 $$
@@ -535,7 +535,7 @@ EU_known = np.zeros_like(omega_grid)
 for j, om in enumerate(omega_grid):
     W = (1 - om) * rf + om * np.random.normal(mu_true, sigma, N)
     Z = -np.exp(-gamma * W)
-    tau_grid = np.linspace(0, 1, len(Z))
+    tau_grid = np.linspace(0.001, 0.999, len(Z))
     EU_known[j] = np.trapezoid(np.sort(Z), tau_grid)
 
 # With parameter uncertainty
@@ -545,7 +545,7 @@ for j, om in enumerate(omega_grid):
     R_draws = np.random.normal(mu_draws, sigma)
     W = (1 - om) * rf + om * R_draws
     Z = -np.exp(-gamma * W)
-    tau_grid = np.linspace(0, 1, len(Z))
+    tau_grid = np.linspace(0.001, 0.999, len(Z))
     EU_uncertain[j] = np.trapezoid(np.sort(Z), tau_grid)
 
 fig, ax = plt.subplots(figsize=(6, 4))
@@ -660,7 +660,8 @@ for j, th_hat in enumerate(theta_hat_grid):
     # CARA utility
     U_vals = -np.exp(-gamma_risk * pf)
     U_sorted = np.sort(U_vals)
-    EU_go[j] = np.mean(U_sorted)  # quantile integral
+    tau_grid = np.linspace(0.001, 0.999, len(U_sorted))
+    EU_go[j] = np.trapezoid(U_sorted, tau_grid)
 
 U_stop = -np.exp(-gamma_risk * 0)
 
@@ -835,9 +836,9 @@ Consider the normal-normal model from @sec-meu-wang with prior $\theta \sim N(2,
 
 (a) Compute the posterior parameters $\mu_*$ and $\sigma_*^2$ using the conjugate updating formulas.
 
-(b) Compute the Wang distortion parameters $\lambda_1 = \alpha/\sigma_*$ and $\lambda_0 = (\mu_* - \mu_0)/\sigma_*$ (see @eq-wang-distortion).
+(b) Compute the Wang distortion parameters $\lambda_1 = \sigma_0/\sigma_n$ and $\lambda_0 = (\mu_0 - \mu_n)/\sigma_n$ (see @eq-wang-distortion).
 
-(c) Write Python code that: (i) plots the prior and posterior densities; (ii) plots the Wang distortion function $g(p) = \Phi(\lambda_1 \Phi^{-1}(p) + \lambda_0)$; (iii) verifies numerically that $g(1 - \Phi((\theta - \mu_0)/\alpha)) = 1 - \Phi((\theta - \mu_*)/\sigma_*)$ for a grid of $\theta$ values.
+(c) Write Python code that: (i) plots the prior and posterior densities; (ii) plots the Wang distortion function $g(p) = \Phi(\lambda_1 \Phi^{-1}(p) + \lambda_0)$; (iii) verifies numerically that $g(\Phi((\theta - \mu_0)/\sigma_0)) = \Phi((\theta - \mu_n)/\sigma_n)$ for a grid of $\theta$ values.
 
 (d) Interpret the distortion: when $\lambda_0 > 0$ and $\lambda_1 > 1$, what happens to the prior quantile function? How does this relate to the data being above the prior mean?
 :::

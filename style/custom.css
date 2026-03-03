@@ -1,0 +1,46 @@
+/* GBC Book — custom styles */
+
+/* Content width */
+.content {
+  max-width: 60em;
+}
+
+/* Exercise styling */
+.exercise {
+  border-left: 3px solid #2780e3;
+  padding-left: 1em;
+  margin: 1.5em 0;
+}
+
+/* Code output styling */
+.cell-output-display {
+  margin-top: 0.5em;
+}
+
+/* Responsive figures — prevent horizontal overflow */
+.cell-output-display img,
+figure img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Foldable code blocks (> 5 lines) */
+details.code-fold {
+  margin: 0.5em 0;
+}
+
+details.code-fold summary {
+  cursor: pointer;
+  font-size: 0.85em;
+  color: #6c757d;
+  padding: 2px 0;
+  user-select: none;
+}
+
+details.code-fold summary:hover {
+  color: #2780e3;
+}
+
+details.code-fold[open] summary {
+  margin-bottom: 0.25em;
+}

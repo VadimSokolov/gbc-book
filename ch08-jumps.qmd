@@ -8,7 +8,7 @@ These problems are common enough that an entire sub-literature of Gaussian proce
 
 The idea is to separate the problem into two parts: (i) detecting *which side of the jump boundary* each point lies on, and (ii) learning the conditional quantile function *given* this regime information. Step (i) is a classification problem; step (ii) is the standard IQN problem from @sec-iqn, but with an extra input feature encoding the regime.
 
-The chapter proceeds as follows. We first formalize the jump discontinuity problem and explain why both GPs and plain IQNs struggle with it (@sec-jumps-problem). We then develop the three steps of the Aug-IQN pipeline: EM clustering to infer regime labels (@sec-jumps-em), MLP classification to predict regimes from inputs alone (@sec-jumps-classifier), and feature augmentation to provide regime information to the IQN (@sec-jumps-augiqn). We evaluate Aug-IQN on three benchmark datasets --- Phantom (@sec-jumps-phantom), Star (@sec-jumps-star), and AMHV (@sec-jumps-amhv) --- and show that it beats the specialized MJGP method on all three. We then extend the pipeline to three or more regimes (@sec-jumps-three-regimes), compare to other jump methods in the literature (@sec-jumps-comparison), and provide practical guidance on when augmentation helps (@sec-jumps-when).
+The chapter proceeds as follows. We first formalize the jump discontinuity problem and explain why both GPs and plain IQNs struggle with it (@sec-jumps-problem). We then develop the three steps of the Aug-IQN pipeline: EM clustering to infer regime labels (@sec-jumps-em), MLP classification to predict regimes from inputs alone (@sec-jumps-classifier), and feature augmentation to provide regime information to the IQN (@sec-jumps-augiqn). We evaluate Aug-IQN on three benchmark datasets --- Phantom (@sec-jumps-phantom), Star (@sec-jumps-star), and AMHV (@sec-jumps-amhv) --- and show that GBC outperforms the specialized MJGP method on all three --- Aug-IQN on Phantom and Star, and plain IQN on AMHV, where the smooth boundary makes augmentation unnecessary. We then extend the pipeline to three or more regimes (@sec-jumps-three-regimes), compare to other jump methods in the literature (@sec-jumps-comparison), and provide practical guidance on when augmentation helps (@sec-jumps-when).
 
 
 ## The Jump Discontinuity Problem {#sec-jumps-problem}
@@ -167,7 +167,7 @@ $$ {#eq-classifier}
 
 This is a standard binary classification problem. We use a multi-layer perceptron (MLP) trained with binary cross-entropy (BCE) loss. The choice of classifier is important but not exotic: any classifier that can represent nonlinear decision boundaries will work. We use an MLP because it is a natural companion to the IQN (same optimizer, same framework), but random forests, gradient-boosted trees, or kernel SVMs with RBF kernels could serve the same purpose. The MLP has the advantage of producing calibrated probabilities via the sigmoid output, which gives the IQN a continuous signal about boundary proximity rather than a hard binary label. We will see in @exr-soft-augmentation that this soft augmentation is important for performance near the boundary.
 
-The classifier is a feedforward network with three hidden layers of 256 units each, ReLU activations, and a sigmoid output:
+The classifier is a feedforward network with three hidden layers of 256 units each and ReLU activations. It outputs raw logits; we apply sigmoid at inference time via `predict_prob` for numerical stability (using `BCEWithLogitsLoss` during training):
 
 ```{python}
 #| eval: true
@@ -197,8 +197,11 @@ class BoundaryClassifier(nn.Module):
                 nn.init.zeros_(m.bias)
 
     def forward(self, x):
-        # Note: numerically more stable to use logits + BCEWithLogitsLoss, but BCE + sigmoid is correct here.
-        return torch.sigmoid(self.net(x)).squeeze(-1)
+        return self.net(x).squeeze(-1)
+
+    def predict_prob(self, x):
+        """Sigmoid applied at inference time for numerical stability."""
+        return torch.sigmoid(self.forward(x))
 ```
 
 Training uses Adam with cosine annealing, the same optimizer configuration we use for the IQN itself:
@@ -243,14 +246,14 @@ def train_classifier(X_train, labels, hdim=256, n_layers=3,
     for _ in range(epochs):
         opt.zero_grad()
         pred = clf(Xt)
-        loss = nn.functional.binary_cross_entropy(pred, yt)
+        loss = nn.functional.binary_cross_entropy_with_logits(pred, yt)
         loss.backward()
         opt.step()
         sched.step()
 
     clf.eval()
     with torch.no_grad():
-        accuracy = ((clf(Xt) > 0.5).float() == yt).float().mean().item()
+        accuracy = ((clf.predict_prob(Xt) > 0.5).float() == yt).float().mean().item()
 
     return clf, x_mean, x_std, accuracy
 ```
@@ -302,7 +305,7 @@ clf, x_mean, x_std, acc = train_classifier(
 x_grid = np.linspace(0, 1, 500).reshape(-1, 1)
 Xt_grid = torch.tensor((x_grid - x_mean) / x_std, dtype=torch.float32)
 with torch.no_grad():
-    prob_grid = clf(Xt_grid).numpy()
+    prob_grid = clf.predict_prob(Xt_grid).numpy()
 
 fig, ax = plt.subplots(1, 1, figsize=(6, 3.5))
 ax.plot(x_grid, prob_grid, color='steelblue', linewidth=2, label=r'$\hat{f}(x) = P(\mathrm{regime}=1|x)$')
@@ -382,8 +385,8 @@ def augiqn_pipeline(X_train, y_train, X_test,
     Xt_tr = torch.tensor((X_train - x_mean) / x_std, dtype=torch.float32)
     Xt_te = torch.tensor((X_test - x_mean) / x_std, dtype=torch.float32)
     with torch.no_grad():
-        fhat_train = clf(Xt_tr).numpy()
-        fhat_test = clf(Xt_te).numpy()
+        fhat_train = clf.predict_prob(Xt_tr).numpy()
+        fhat_test = clf.predict_prob(Xt_te).numpy()
 
     # Step 3: Augment inputs and train IQN
     X_aug_train = np.column_stack([X_train, fhat_train])
@@ -454,6 +457,14 @@ graph TD
 
 ```{mermaid}
 graph TD
+    subgraph C["Member C (boundary at 0.52)"]
+        C1[Regime 0] --> C2[Sharp jump]
+        C2 --> C3[Regime 1]
+    end
+```
+
+```{mermaid}
+graph TD
     subgraph E["Ensemble average"]
         E1[Regime 0] --> E2["Blurred transition 0.48–0.52"]
         E2 --> E3[Regime 1]
@@ -479,15 +490,6 @@ More broadly, the Phantom boundary is representative of a wide class of real-wor
 This geometry makes the Phantom an ideal test case for Aug-IQN. The EM clustering step is easy because the two regimes have well-separated means, so the marginal histogram is clearly bimodal. The classification step is the bottleneck: the classifier must learn a nonlinear decision boundary that tracks the sine wave through the input domain. The MLP's universal approximation capacity is essential here --- a linear or even polynomial classifier would introduce systematic errors over large regions of the input space, corrupting the downstream IQN.
 
 We compare three methods using the @flowers2026modular protocol: 90/10 train/test split, 20 replicates, full training set ($n_{\mathrm{train}} \approx 9{,}000$). Response values are normalized to $[0, 1]$.
-
-```{python}
-#| eval: false
-#| code-fold: false
-#| label: phantom-experiment
-# Results from run_augiqn_phantom_v2.py (20 replicates, A100 GPU)
-# Classifier: MLP 256x3, 3000 epochs; IQN: 256 hidden, 8000 epochs
-# See code/results/augiqn_phantom_v2_numbers.txt for full logs
-```
 
 | Method | RMSE | CRPS | 90% Coverage | Time/rep |
 |:-------|:----:|:----:|:------------:|:--------:|
@@ -563,7 +565,7 @@ A useful quantitative diagnostic is the *overlap coefficient* of the fitted two-
 
 ## Summary of Jump-Process Benchmarks {#sec-jumps-summary}
 
-@tbl-summary collects results across all datasets discussed in this chapter, together with the Michalewicz benchmark ($d = 4$, $N = 100{,}000$) where MJGP is computationally infeasible ($\geq 48$ hours) but GBC trains in under 30 minutes.
+@tbl-summary collects results across all datasets discussed in this chapter, together with the Michalewicz benchmark ($d = 4$, $N = 90{,}000$) where MJGP is computationally infeasible ($\geq 48$ hours) but GBC trains in under 30 minutes.
 
 | Dataset | $d$ | $n$ | Best Method | CRPS | vs. MJGP |
 |:--------|:---:|:---:|:------------|:----:|:--------:|

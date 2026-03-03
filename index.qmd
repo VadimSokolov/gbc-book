@@ -88,7 +88,7 @@ pip install git+https://github.com/VadimSokolov/gbc.git
 ```
 
 ```{python}
-#| eval: false
+#| eval: true
 import gbc
 print(f"GBC version: {gbc.__version__}")
 ```

@@ -37,6 +37,7 @@ book:
   appendices:
     - appendix-a-proofs.qmd
     - appendix-b-computing.qmd
+    - appendix-c-notation.qmd
 
 bibliography: references.bib
 

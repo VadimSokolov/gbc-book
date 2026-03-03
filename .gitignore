@@ -1,11 +1,39 @@
-# Ignore everything
-*
-
-# Track only these
-!*.qmd
-!*.yml
-!*.yaml
-!.gitignore
-
-/.quarto/
+# === Build outputs ===
+_book/
+.quarto/
 **/*.quarto_ipynb
+*_files/
+index_files/
+site_libs/
+build/
+Generative-Bayesian-Computation.tex
+
+# === Jupyter cache (Quarto uses _freeze instead) ===
+.jupyter_cache/
+
+# === Python ===
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+
+# === Large/reference PDFs ===
+*.pdf
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === Editor/IDE ===
+.vscode/
+.idea/
+
+# === Reference materials (not part of book) ===
+fig/
+BDA3.md
+dist-rl-book.md
+planv1.md
+planv2.md.md
+sources.md
+misc/
+CLAUDE.md

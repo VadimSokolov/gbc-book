@@ -298,7 +298,12 @@ def active_learning_loop(
     K=3,                # ensemble size
     epochs=3000,        # training epochs per round
 ):
-    """GBC active learning with randomized-prior ensemble."""
+    """GBC active learning with randomized-prior ensemble.
+
+    train_model: trains a RandomPriorNet on (X, y) for the given
+    number of epochs using Adam and pinball loss. In practice, use
+    gbc.ensemble.train_het_mlp or a custom training loop.
+    """
     X_train = X_init.clone()
     y_train = y_init.clone()
 
@@ -314,9 +319,9 @@ def active_learning_loop(
             ensemble.append(model)
 
         # Select next point by maximum disagreement
-        idx = select_next(ensemble, X_candidates, batch_size=1)
-        x_new = X_candidates[idx]
-        y_new = f_simulator(x_new).reshape(-1)  # ensure 1D before concatenating
+        idx = select_next(ensemble, X_candidates, batch_size=1).item()
+        x_new = X_candidates[idx].unsqueeze(0)   # (1, d)
+        y_new = f_simulator(x_new).reshape(-1)
 
         # Update training set
         X_train = torch.cat([X_train, x_new])
@@ -418,6 +423,17 @@ Following @sauer2023active exactly, we use $n_0 = 50$ initial LHS points, acquir
 
 : Rocket LGBB active learning results. GBC wins by a factor of 2.95. {#tbl-al-rocket}
 
+@fig-al-rocket-curves shows the learning curves across all 30 replicates. The 90% confidence bands separate completely by $n \approx 150$, and every GBC replicate outperforms every DGP replicate.
+
+```{python}
+#| eval: true
+#| echo: false
+#| label: fig-al-rocket-curves
+#| fig-cap: "Rocket LGBB active learning curves: RMSE vs. acquisition budget for GBC-AL (blue) and DGP+ALC (red). Shaded bands show 90% confidence intervals across 30 (GBC) and 50 (DGP) replicates. The distributions separate completely by $n \\approx 150$."
+from IPython.display import Image
+display(Image("cache/fig-al-rocket-curves.png"))
+```
+
 GBC-AL achieves $2.95\times$ lower RMSE than DGP+ALC. The result is not just a difference in means --- the replicate distributions do not overlap. Every single one of the 30 GBC replicates achieves lower RMSE than every single one of the 50 DGP replicates. The 90% confidence bands separate completely by approximately $n = 150$, and the gap widens as more points are acquired.
 
 The *acquisition geography* on the LGBB surface reveals why GBC-AL succeeds so decisively. The ensemble disagreement concentrates on three distinct types of regions, and this concentration pattern is the key to the $2.95\times$ improvement.
@@ -469,6 +485,17 @@ Following @sauer2023active, we use $n_0 = 110$ initial points (including 10 repl
 | DGP+ALC | 2.26 | *0.967* | 10 |
 
 : Satellite GRACE active learning results. GBC leads early; DGP overtakes at $n \approx 300$. {#tbl-al-satellite}
+
+@fig-al-satellite-curves shows the learning curves for the satellite benchmark, revealing the crossover at $n \approx 300$ where the GP's smoothness prior begins to pay dividends.
+
+```{python}
+#| eval: true
+#| echo: false
+#| label: fig-al-satellite-curves
+#| fig-cap: "Satellite GRACE active learning curves: RMSPE vs. acquisition budget. GBC-AL (blue) leads in the early phase ($n < 300$) but DGP+ALC (red) overtakes at larger budgets, reflecting the GP's advantage on smooth response surfaces with sufficient data."
+from IPython.display import Image
+display(Image("cache/fig-al-satellite-curves.png"))
+```
 
 The satellite results reveal a *crossover*: GBC-AL leads throughout the early acquisition phase, achieving 16% better RMSPE at $n = 200$. But after approximately $n = 300$ points, DGP overtakes GBC, ultimately reaching RMSPE = 0.967 at $n = 500$ compared to GBC's 1.192 --- a 23% advantage for the GP.
 

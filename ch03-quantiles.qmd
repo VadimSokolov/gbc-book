@@ -60,11 +60,11 @@ $$
 
 The infimum in the definition handles the case where $F$ has flat regions (corresponding to gaps in the support of $Y$) or jumps (corresponding to point masses). For a continuous, strictly increasing CDF, $Q$ is simply the ordinary inverse function. The generalized inverse is needed for distributions like the geometric or Poisson, where $F$ has jumps, and for distributions like the uniform on $\{0\} \cup [1,2]$, where $F$ has flat regions. In our applications, we will mostly work with continuous distributions, but it is reassuring to know that the definition covers all cases.
 
-The quantile function enjoys several fundamental properties. It is non-decreasing: if $\tau_1 < \tau_2$, then $Q(\tau_1) \leq Q(\tau_2)$. It is right-continuous: $\lim_{\tau \downarrow \tau_0} Q(\tau) = Q(\tau_0)$. This follows directly from the definition as an infimum: $Q(\tau) = \inf\{y : F(y) \geq \tau\}$ is cadlag (right-continuous with left limits) in $\tau$ whenever $F$ is right-continuous. It satisfies a Galois connection with $F$: for any $y$ and $\tau \in (0,1)$,
+The quantile function enjoys several fundamental properties. It is non-decreasing: if $\tau_1 < \tau_2$, then $Q(\tau_1) \leq Q(\tau_2)$. It is left-continuous: $\lim_{\tau \uparrow \tau_0} Q(\tau) = Q(\tau_0)$. This follows from the definition as an infimum over $\{y : F(y) \geq \tau\}$: as $\tau$ increases to $\tau_0$ from below, the set expands and the infimum approaches $Q(\tau_0)$. In the other direction, $Q$ has right limits but need not be right-continuous---it can jump upward at atoms of $F$. (By contrast, the CDF $F$ is cadlag, right-continuous with left limits.) The quantile function satisfies a Galois connection with $F$: for any $y$ and $\tau \in (0,1)$,
 $$
 Q(\tau) \leq y \quad \Longleftrightarrow \quad \tau \leq F(y).
 $$
-This is the key duality between $F$ and $Q$---the CDF is right-continuous and non-decreasing, and the quantile function (generalized inverse) is likewise right-continuous and non-decreasing. Together they form a Galois connection on the real line. Finally, for any random variable $Y$ with CDF $F$,
+This is the key duality between $F$ and $Q$---the CDF is right-continuous and non-decreasing, while the quantile function is left-continuous and non-decreasing. Together they form a Galois connection on the real line. Finally, for any random variable $Y$ with CDF $F$,
 $$
 Y \stackrel{d}{=} Q(F(Y)).
 $$
@@ -201,13 +201,13 @@ plt.show()
 We have defined the check loss geometrically---as an asymmetric, piecewise-linear penalty. But why should minimizing this particular function produce quantiles? The next result provides the rigorous answer: the $\tau$-th quantile is the unique minimizer of the expected check loss at level $\tau$.
 
 ::: {.callout-tip appearance="simple" title="Theorem 3.1: Quantile as Minimizer of Check Loss"}
-For a random variable $Y$ with CDF $F$, the $\tau$-th quantile minimizes the expected check loss:
+For a random variable $Y$ with continuous CDF $F$ and density $f$, the $\tau$-th quantile minimizes the expected check loss:
 $$
 Q(\tau) = F^{-1}(\tau) = \arg\min_{q \in \mathbb{R}} \; E[\rho_\tau(Y - q)].
 $$ {#eq-quantile-optim}
 :::
 
-*Proof.* Assume $F$ is continuous with density $f$. Write out the expected loss:
+*Proof.* Write out the expected loss:
 $$
 E[\rho_\tau(Y - q)] = \tau \int_q^\infty (y - q) \, dF(y) + (1-\tau) \int_{-\infty}^q (q - y) \, dF(y).
 $$
@@ -216,6 +216,8 @@ $$
 \frac{d}{dq} E[\rho_\tau(Y - q)] = -\tau(1 - F(q)) + (1-\tau) F(q) = F(q) - \tau.
 $$
 Setting this to zero gives $F(q) = \tau$, i.e., $q = F^{-1}(\tau)$. The second derivative is $f(q) \geq 0$, confirming a minimum. $\square$
+
+*Remark.* The result extends to arbitrary CDFs $F$ (possibly with jumps or flat regions) if we replace $F^{-1}$ with the generalized inverse $F^{-1}(\tau) = \inf\{y : F(y) \geq \tau\}$; the proof uses subgradient calculus in place of differentiation. See @koenker2005quantile for the general treatment.
 
 In plain language, this theorem says that if we want to find the value below which a fraction $\tau$ of the distribution falls, we can do so by minimizing a weighted sum of over- and under-prediction errors. The asymmetric weights---$\tau$ for undershoot and $(1-\tau)$ for overshoot---tilt the optimal prediction toward the $\tau$-th quantile rather than the mean.
 
@@ -286,7 +288,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-@fig-check-loss-minimizer illustrates @eq-quantile-optim on data drawn from a mixture of two normals: $0.7 \cdot N(0,1) + 0.3 \cdot N(4, 0.25)$. For each $\tau$, the expected check loss is a convex function of $q$, and its minimum occurs at the true $\tau$-th quantile. The skewed mixture makes the quantiles non-trivial: $Q(0.1) \approx -1.28$ lies in the left component, $Q(0.5) \approx 0.52$ sits near the boundary, and $Q(0.9) \approx 4.19$ falls in the right component.
+@fig-check-loss-minimizer illustrates @eq-quantile-optim on data drawn from a mixture of two normals: $0.7 \cdot N(0,1) + 0.3 \cdot N(4, 0.25)$. For each $\tau$, the expected check loss is a convex function of $q$, and its minimum occurs at the true $\tau$-th quantile. The skewed mixture makes the quantiles non-trivial: $Q(0.1)$ lies in the left component (close to the standard normal quantile but slightly higher, because the right component shifts probability mass upward), $Q(0.5)$ sits near the boundary between components, and $Q(0.9)$ falls deep in the right component. The exact values are shown in the figure legend.
 
 The pinball loss is simple to implement. The `gbc` package provides it as follows:
 
@@ -604,7 +606,7 @@ The function $G$ is a *generator*: given inputs $X$ and a source of randomness $
 What is $G$? Since both $G$ and the conditional quantile function map from the unit interval to the support of $Y$, they should be related. The next theorem confirms this and establishes the precise connection.
 
 ::: {.callout-tip appearance="simple" title="Theorem 3.2: The Compositional Identity"}
-If $Y = G(U, X)$ where $U \sim \text{Uniform}(0,1)$ is independent of $X$, and $G(\cdot, x)$ is non-decreasing in its first argument for each $x$, then
+If $Y = G(U, X)$ where $U \sim \text{Uniform}(0,1)$ is independent of $X$, and $G(\cdot, x)$ is strictly increasing and continuous in its first argument for each $x$, then
 $$
 G(\tau, x) = Q_Y(\tau | x) = F_{Y|X=x}^{-1}(\tau).
 $$ {#eq-compositional}
@@ -615,14 +617,16 @@ That is, the generator $G$ evaluated at $\tau$ equals the conditional $\tau$-th 
 $$
 F_{Y|X=x}(y) = P(Y \leq y | X = x) = P(G(U, x) \leq y | X = x).
 $$
-Since $G(\cdot, x)$ is non-decreasing and $U \perp X$:
+Since $G(\cdot, x)$ is strictly increasing and continuous, its ordinary inverse $G^{-1}(\cdot, x)$ exists, and using $U \perp X$:
 $$
 = P(U \leq G^{-1}(y, x)) = G^{-1}(y, x),
 $$
-where $G^{-1}(\cdot, x)$ is the generalized inverse of $G(\cdot, x)$. This means $F_{Y|X=x} = G^{-1}(\cdot, x)$, and inverting both sides:
+so $F_{Y|X=x} = G^{-1}(\cdot, x)$. Inverting both sides:
 $$
 G(\tau, x) = F_{Y|X=x}^{-1}(\tau) = Q_Y(\tau | x). \quad \square
 $$
+
+*Remark.* When $G(\cdot, x)$ is only non-decreasing (with possible flat regions), the identity $G(\tau, x) = Q_Y(\tau | x)$ still holds at continuity points of $G$. The general statement replaces the ordinary inverse with the generalized inverse $G^{-1}(y, x) = \inf\{u : G(u, x) > y\}$. In practice, the neural-network generators we train are strictly increasing by construction, so the simpler version above suffices.
 
 This result says:
 

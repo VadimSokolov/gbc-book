@@ -1,0 +1,79 @@
+# Notation {#sec-notation .unnumbered}
+
+We collect the main notation used throughout the book. Symbols are grouped by category; the rightmost column indicates the chapter where each symbol is first defined or used substantively.
+
+## Probability and Distributions
+
+| Symbol | Meaning | Introduced |
+|--------|---------|-----------|
+| $F$, $F_Y$ | Cumulative distribution function (CDF) | @sec-quantiles |
+| $Q(\tau) = F^{-1}(\tau) = \inf\{y : F(y) \geq \tau\}$ | Quantile function (generalized inverse) | @sec-quantiles |
+| $Q^*(\tau, x) = F_{Y|X}^{-1}(\tau \mid x)$ | True conditional quantile function | @sec-noise-outsourcing |
+| $\tau \in (0,1)$ | Quantile level | @sec-quantiles |
+| $U \sim \text{Uniform}(0,1)$ | Standard uniform random variable | @sec-quantiles |
+| $\Phi(z)$, $\Phi^{-1}(\tau)$ | Standard normal CDF and quantile (probit) | @sec-quantiles |
+| $Y \sim F$ | $Y$ distributed according to $F$ | @sec-quantiles |
+| $Y \mid X = x$ | Conditional distribution of $Y$ given $X = x$ | @sec-quantiles |
+| $Y \stackrel{d}{=} Z$ | Equality in distribution | @sec-noise-outsourcing |
+| $U \perp X$ | $U$ independent of $X$ | @sec-noise-outsourcing |
+| $\pi(\theta)$ | Prior distribution | @sec-bayesian-inference |
+| $p(y \mid \theta)$ | Likelihood | @sec-bayesian-inference |
+| $\pi(\theta \mid y)$ | Posterior distribution | @sec-bayesian-inference |
+| $m(y) = \int p(y \mid \theta')\pi(\theta')\,d\theta'$ | Marginal likelihood | @sec-bayesian-inference |
+
+## Loss Functions and Metrics
+
+| Symbol | Meaning | Introduced |
+|--------|---------|-----------|
+| $\rho_\tau(u) = u\bigl(\tau - \mathbf{1}(u < 0)\bigr)$ | Pinball (check) loss at level $\tau$ | @sec-quantiles |
+| $\text{CRPS}(G, y) = 2\int_0^1 \rho_\tau(y - G(\tau))\,d\tau$ | Continuous Ranked Probability Score | @sec-quantiles |
+| $W_p(F, G) = \bigl(\int_0^1 |F^{-1}(\tau) - G^{-1}(\tau)|^p\,d\tau\bigr)^{1/p}$ | $p$-Wasserstein distance | @sec-noise-outsourcing |
+| RMSE | Root mean squared error | @sec-datasets |
+
+## IQN Architecture
+
+| Symbol | Meaning | Introduced |
+|--------|---------|-----------|
+| $\varphi(\tau) = \bigl(\cos(\pi j \tau)\bigr)_{j=1}^{M}$ | Cosine embedding of $\tau$ | @sec-iqn |
+| $M$ | Number of cosine embedding frequencies | @sec-iqn |
+| $\phi$ | Neural network parameters (weights and biases) | @sec-iqn |
+| $G_\phi(\tau, x)$ | IQN output: learned quantile function | @sec-iqn |
+| $\psi_\phi(x)$ | Covariate encoder (MLP branch) | @sec-iqn |
+| $\phi_\phi(\tau)$ | Quantile encoder (cosine branch) | @sec-iqn |
+| $h_x \odot h_\tau$ | Hadamard (element-wise) product — multiplicative merge | @sec-iqn |
+
+## Bayesian Inference via GBC
+
+| Symbol | Meaning | Introduced |
+|--------|---------|-----------|
+| $G^*(\tau, x)$ | Noise outsourcing map: $Y \stackrel{a.s.}{=} G^*(U, X)$ | @sec-noise-outsourcing |
+| $S(y)$ | Summary statistic of data | @sec-bayesian-inference |
+| $g(p) = \Phi(\lambda_1 \Phi^{-1}(p) + \lambda_0)$ | Wang distortion function | @sec-meu-wang |
+| $\lambda_1 = \sigma_0 / \sigma_n$, $\lambda_0 = (\mu_0 - \mu_n)/\sigma_n$ | Wang parameters for normal-normal model | @sec-bi-normal |
+
+## General Conventions
+
+| Convention | Meaning |
+|-----------|---------|
+| $\theta$, $\theta_1, \ldots, \theta_d$ | Parameters (scalar or vector) |
+| $x \in \mathcal{X} \subseteq \mathbb{R}^d$ | Covariates / input features |
+| $y$ | Response / observed data |
+| $n$ | Sample size (training set) |
+| Bold lowercase ($\mathbf{x}$) | Column vectors |
+| Bold uppercase ($\mathbf{X}$) | Matrices |
+| $(\cdot)^\top$ | Transpose |
+| $\mathbf{1}(\cdot)$ | Indicator function |
+| $\hat{\cdot}$ | Estimated or learned quantity |
+| $\bar{y} = n^{-1}\sum_{i=1}^n y_i$ | Sample mean |
+| $\mathcal{O}(\cdot)$ | Big-O asymptotic bound |
+
+## Network and Training
+
+| Symbol | Meaning |
+|--------|---------|
+| $L$ | Network depth (number of layers) |
+| $W$ | Network width (maximum layer width) |
+| $\mathcal{G}(L, W)$ | ReLU network class with depth $L$, width $W$ |
+| $\beta$ | Holder smoothness exponent (in convergence theorems) |
+| $B$ | Mini-batch size |
+| $\eta$ | Learning rate |

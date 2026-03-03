@@ -72,7 +72,7 @@ model = IQN(xdim=1).to(device)
 X_t = torch.tensor(X, dtype=torch.float32).to(device)
 ```
 
-Most `gbc` training functions accept a `device` argument, so in practice we simply pass `device=get_device()` and the library handles placement automatically. The exception is `train_iqn`, which runs on CPU only; use `train_het_mlp` or `train_het_ensemble` for GPU-accelerated training.
+The `train_het_mlp` function accepts a `device` argument, so in practice we pass `device=get_device()` and the library handles placement automatically. The other training functions --- `train_iqn` and `train_classifier` --- always run on CPU (they have no `device` parameter). For large datasets that benefit from GPU acceleration, use the het-MLP pipeline.
 
 **Apple Silicon (MPS).** On macOS with an M-series chip, PyTorch 2.0+ supports the Metal Performance Shaders (MPS) backend:
 
@@ -88,7 +88,7 @@ MPS provides roughly 3--5$\times$ speedup over CPU for the network sizes used in
 
 ```python
 from gbc.utils import get_device
-device = get_device()  # cuda > mps > cpu
+device = get_device()  # cuda > cpu
 ```
 
 **Reproducibility across devices.** Neural network training is not bitwise reproducible across devices (CPU vs. CUDA vs. MPS) because floating-point operations are reordered for performance. We fix random seeds via `gbc.utils.set_seed()` to make results reproducible *on the same device*. The numerical conclusions --- CRPS, RMSE, coverage --- are stable across platforms to within the reported standard errors.
@@ -149,7 +149,7 @@ We provide a concise reference for the most important functions and classes in e
 
 **`gbc.active_learning`** --- the randomized-prior ensemble from Chapter [-@sec-active-learning]. `RandomPriorNet(xdim, hdim=128, nlayers=3, prior_scale=1.0)` adds a frozen random network to a trainable network following Osband et al. (2018). `ensemble_disagreement(models, X)` returns the pointwise standard deviation across ensemble members. `select_next(models, X_candidates, batch_size=1)` picks the candidates with highest disagreement.
 
-**`gbc.causal`** --- the causal IQN from Chapter [-@sec-causal]. `CausalIQN(xdim=1, hsz=32, nh=32)` has four sub-modules: a propensity network, a baseline-outcome network, a treatment-effect network, and a cosine tau-embedding. The `.fit(x, y, z, epochs=3000, ...)` method trains with a composite loss that includes a binary cross-entropy term on the propensity score. `.estimate_cate(x, z, n_mc=500)` returns the median CATE and a full `(n, n_mc)` array of treatment-effect samples.
+**`gbc.causal`** --- the causal IQN from Chapter [-@sec-causal]. `CausalIQN(xdim=1, hsz=32, nh=32)` has four sub-modules: a propensity network, a baseline-outcome network, a treatment-effect network, and a cosine tau-embedding. The `.fit(x, y, z, epochs=3000, ...)` method trains with a composite loss that includes a binary cross-entropy term on the propensity score. `.estimate_cate(x, z, n_mc=500)` sweeps random quantile levels through the treatment-effect head and returns the median as a point estimate alongside the full `(n, n_mc)` sample array. These samples are quantile treatment effects (QTEs), not the conditional mean $E[Y(1)-Y(0)|X]$; the median QTE equals the conventional CATE only when the treatment-effect distribution is symmetric. Note that the `z` argument is passed to `forward` but does not affect the `te` head, so it has no effect on the returned values.
 
 **`gbc.conformal`** --- conformal prediction intervals from Chapter [-@sec-calibration]. `temporal_cv_quantiles(residuals, strata, alpha=0.90, min_count=20)` computes per-stratum quantiles from out-of-fold absolute residuals. `conformal_pi(y_hat, strata, quantile_map)` constructs symmetric prediction intervals centered on the point forecast.
 
@@ -159,7 +159,7 @@ We provide a concise reference for the most important functions and classes in e
 
 **`gbc.plotting`** --- two workhorse plotting functions. `quantile_fan(x, samples, ...)` draws nested shaded prediction bands at multiple coverage levels with optional overlays for the true function and training data. `calibration_plot(y, samples, ...)` produces a PIT histogram that reveals whether the predictive distribution is calibrated. `set_theme()` applies the book's standard figure style to all subsequent Matplotlib plots.
 
-**`gbc.utils`** --- three small helpers. `set_seed(seed=42)` sets seeds for PyTorch, NumPy, and CUDA. `get_device()` returns the best available `torch.device` (CUDA > MPS > CPU). `cosine_schedule(optimizer, T_max, eta_min_ratio=0.01)` wraps PyTorch's `CosineAnnealingLR` scheduler.
+**`gbc.utils`** --- three small helpers. `set_seed(seed=42)` sets seeds for PyTorch, NumPy, and CUDA. `get_device()` returns the best available `torch.device` (CUDA > CPU). `cosine_schedule(optimizer, T_max, eta_min_ratio=0.01)` wraps PyTorch's `CosineAnnealingLR` scheduler.
 
 A minimal example that trains an IQN on the motorcycle data:
 

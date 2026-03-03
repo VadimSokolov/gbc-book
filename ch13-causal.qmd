@@ -8,7 +8,7 @@ This chapter turns to *causal inference*. The question is not "what is the distr
 
 The GBC approach to causal inference builds on a direct observation: the conditional average treatment effect (CATE) is an integral of the conditional quantile function. Since the IQN already learns the entire conditional quantile function, we get CATE estimation *for free* as a by-product. But we get much more than the CATE. We get the full conditional distribution of outcomes under each treatment arm, which reveals how treatment reshapes the entire outcome distribution---not just its mean. This is the *quantile treatment effect* (QTE), and it answers questions that neither Double Machine Learning [@chernozhukov2018double] nor Bayesian Causal Forests [@hahn2020bayesian] can address without additional estimation.
 
-The material in this chapter draws on @nareklishvili2026causal, which develops the GBC framework for causal inference in detail. We begin with the potential outcomes framework and the three identification assumptions, then introduce the propensity score module and the three-part loss function that together form the GBC causal architecture. We establish semiparametric efficiency and compare convergence rates with Double Machine Learning. The LaLonde job training benchmark and controlled simulation studies validate the theory. We close with distributional treatment effects---a concept that goes beyond both ATE and QTE to measure the total shift between treated and control outcome distributions via the Wasserstein distance from optimal transport.
+The material in this chapter draws on @nareklishvili2026causal, which develops the GBC framework for causal inference in detail. We begin with the potential outcomes framework and the three identification assumptions, then introduce the propensity score module and the composite loss function that together form the GBC causal architecture. We establish semiparametric efficiency and compare convergence rates with Double Machine Learning. The LaLonde job training benchmark and controlled simulation studies validate the theory. We close with distributional treatment effects---a concept that goes beyond both ATE and QTE to measure the total shift between treated and control outcome distributions via the Wasserstein distance from optimal transport.
 
 ## The Causal Inference Problem {#sec-causal-problem}
 
@@ -179,7 +179,7 @@ $$ {#eq-propensity-loss}
 A well-calibrated propensity score is important for the downstream CATE estimation. If the propensity model is badly misspecified, the augmented IQN may inherit the bias. In practice, we recommend checking calibration by binning the estimated propensity scores and comparing the observed treatment rate within each bin to the average predicted probability. A well-calibrated model should produce a roughly linear relationship between predicted and observed treatment rates. When calibration is poor, it may help to use a more flexible propensity model (e.g., adding hidden layers) or to apply Platt scaling as a post-hoc correction.
 
 
-## The Three-Part Loss {#sec-causal-loss}
+## The Composite Loss {#sec-causal-loss}
 
 The GBC approach to causal inference trains a single IQN that takes as input the covariates $x$, the treatment indicator $z$, the estimated propensity score $\hat{e}(x)$, and a quantile level $q \sim \text{Uniform}(0,1)$. The network outputs $\hat{Q}(q, x, z, \hat{e}(x))$, an estimate of the $q$-th conditional quantile of $Y$ given $(X, Z)$.
 
@@ -188,7 +188,7 @@ To train the outcome model effectively for causal estimation, we use a two-step 
 The outcome model training loss is
 $$
 \mathcal{L} = \mathcal{L}_{\text{pinball}} + w_1 \mathcal{L}_{\text{MAE}},
-$$ {#eq-three-part}
+$$ {#eq-causal-loss}
 where the components are:
 
 *1. Pinball loss (quantile fidelity).* The core quantile regression loss:
@@ -209,14 +209,14 @@ The two-part loss is the GBC alternative to Double Machine Learning's orthogonal
 
 The key difference is that DML constructs a *pseudo-outcome* that algebraically removes the effect of nuisance parameter estimation, while GBC lets the network learn the adjustment implicitly. DML's approach comes with strong theoretical guarantees. GBC's approach is more flexible but requires the network to have sufficient capacity to learn the confounding adjustment from data.
 
-Putting together the propensity module and the three-part loss, the full GBC algorithm for causal inference is:
+Putting together the propensity module and the composite loss, the full GBC algorithm for causal inference is:
 
 ::: {.callout-tip appearance="simple" title="Algorithm 13.1: GBC for Causal Inference"}
 *Input:* Observed data $(X_i, Z_i, Y_i)_{i=1}^n$.
 
 *Step 1 (Propensity).* Estimate $\hat{e}(X_i) = \hat{P}(Z = 1 \mid X_i)$ via logistic regression or a neural network. Construct augmented covariates $\tilde{X}_i = (X_i, \hat{e}(X_i))$.
 
-*Step 2 (Train IQN).* Minimize the two-part loss (@eq-three-part) with respect to the IQN parameters, using $\hat{e}(X_i)$ as an additional input covariate. At each minibatch, sample $q \sim \text{Uniform}(0, 1)$ and compute $\hat{Q}(q, \tilde{X}_i, Z_i)$. The propensity is not re-estimated in this step; it enters only as a fixed covariate.
+*Step 2 (Train IQN).* Minimize the composite loss (@eq-causal-loss) with respect to the IQN parameters, using $\hat{e}(X_i)$ as an additional input covariate. At each minibatch, sample $q \sim \text{Uniform}(0, 1)$ and compute $\hat{Q}(q, \tilde{X}_i, Z_i)$. The propensity is not re-estimated in this step; it enters only as a fixed covariate.
 
 *Step 3 (Infer).* For a new unit with covariates $x$, evaluate the QTE as $\widehat{\text{QTE}}(q, x) = \hat{Q}(q, \tilde{x}, 1) - \hat{Q}(q, \tilde{x}, 0)$ for any $q \in (0,1)$. The CATE is obtained by averaging over a grid of quantile levels $\mathcal{U} = \{0.05, 0.15, \ldots, 0.95\}$: $\hat{\tau}(x) = \frac{1}{|\mathcal{U}|} \sum_{q \in \mathcal{U}} \widehat{\text{QTE}}(q, x)$. Finally, the ATE is the average of the CATE over the test sample: $\widehat{\text{ATE}} = \frac{1}{n_{\text{test}}} \sum_{j} \hat{\tau}(X_j)$.
 
@@ -334,7 +334,7 @@ The LaLonde dataset [@lalonde1986evaluating] is the gold standard benchmark in c
 
 The dataset contains $n = 445$ observations with covariates including age, years of education, race indicators (Black, Hispanic), marital status, high school dropout indicator, and prior earnings in 1974 and 1975. The outcome is real earnings in 1978. Following the econometrics literature, we use the log-transformed outcome $\log(\text{re78} + 1)$, which produces a more normally distributed response and treatment effects interpretable as approximate percentage changes.
 
-We compare three methods: DML (partially linear regression with random forest nuisance estimation using 500 trees at max depth 5 and 5-fold cross-fitting), BCF (Bayesian Causal Forests [@hahn2020bayesian] with logistic regression propensity scores and MCMC posterior sampling), and GBC (a quantile neural network with cosine embedding, propensity score augmentation, and the three-part loss).
+We compare three methods: DML (partially linear regression with random forest nuisance estimation using 500 trees at max depth 5 and 5-fold cross-fitting), BCF (Bayesian Causal Forests [@hahn2020bayesian] with logistic regression propensity scores and MCMC posterior sampling), and GBC (a quantile neural network with cosine embedding, propensity score augmentation, and the composite loss).
 
 ```{python}
 #| eval: true
@@ -403,6 +403,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 np.random.seed(42)
+torch.manual_seed(42)
 
 n = 1000
 p = 3
@@ -666,6 +667,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 np.random.seed(123)
+torch.manual_seed(123)
 
 n_dist = 2000
 p_dist = 2
