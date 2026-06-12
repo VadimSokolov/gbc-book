@@ -33,11 +33,15 @@ book:
         - ch12-meu.qmd
         - ch13-causal.qmd
         - ch14-calibration.qmd
+    - part: "Frontiers"
+      chapters:
+        - ch15-sequential.qmd
     - references.qmd
   appendices:
     - appendix-a-proofs.qmd
     - appendix-b-computing.qmd
     - appendix-c-notation.qmd
+    - appendix-d-moddev.qmd
 
 bibliography: references.bib
 

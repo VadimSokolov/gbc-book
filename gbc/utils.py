@@ -19,8 +19,12 @@ def set_seed(seed: int = 42):
 
 
 def get_device() -> torch.device:
-    """Return CUDA device if available, else CPU."""
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    """Return best available device: CUDA > MPS > CPU."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
 
 
 def cosine_schedule(optimizer, T_max: int, eta_min_ratio: float = 0.01):

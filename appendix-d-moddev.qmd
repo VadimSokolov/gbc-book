@@ -1,0 +1,111 @@
+# Moderate-Deviation Theory for Posterior Quantiles {#sec-moddev}
+
+Chapter 14 documents, empirically, that the IQN under-disperses on high-SNR data and that prediction intervals collapse. It patches the symptom with conformal calibration. This appendix supplies the theory that Chapter 14 lacks: it characterizes which quantile levels are intrinsically hard to learn, why, and what to change in training to fix the problem at the source rather than post hoc. The central tool is the Moderate Deviation Principle (MDP), which governs the regime between the central limit theorem and the large-deviation principle.
+
+A clarifying point up front: the Chapter 14 gradient-collapse failure is an architecture-driven, CLT-zone phenomenon at fixed nominal levels ($\tau = 0.05, 0.95$), and the het-MLP fixes it. The issue analyzed here is distinct and more fundamental: it concerns the **extreme tail quantiles** ($\tau \to 0, 1$) and persists even with a perfect architecture. These tail quantiles are exactly the ones that matter for tail-sensitive decisions (@sec-meu), value-at-risk, and rare-event posterior probabilities.
+
+## Three Deviation Regimes {#sec-moddev-regimes}
+
+Fix a regular parametric model with $n$ observations, per-observation Fisher information $i(\theta_0)$, and posterior $\pi_n(\theta \mid y_{1:n})$. Write the posterior quantile function $Q_n(\tau)$. Three regimes govern the behavior of $Q_n(\tau)$ as $n \to \infty$:
+
+1. **CLT zone** (fixed $\tau \in (0,1)$). The Bernstein--von Mises theorem gives $\pi_n \approx N(\hat{\theta}_n, \sigma_n^2)$ in total variation, with $\sigma_n = (n \cdot i)^{-1/2}$. The posterior quantile satisfies $Q_n(\tau) \approx \hat{\theta}_n + \sigma_n \Phi^{-1}(\tau)$, uniformly on compact subsets of $(0,1)$. Fluctuations are of order $\sigma_n \sim n^{-1/2}$.
+
+2. **Moderate zone** ($\tau_n \to 0$ or $1$ slowly). Parameterize $\tau_n = \exp(-a_n^2 c)$ with $a_n \to \infty$, $a_n = o(\sqrt{n})$, $c > 0$. The relevant quantile sits at deviation scale $a_n \sigma_n$, between $n^{-1/2}$ and $O(1)$. The Gaussian approximation is correct only to leading exponential order; cumulant corrections enter at order $1/a_n$.
+
+3. **Large-deviation zone** ($\tau_n$ exponentially small in $n$). Fluctuations are of order $O(1)$; the rate is the model's full Cramér rate function. Outside the scope of this appendix and rarely needed in practice.
+
+GBC training samples $\tau \sim \text{Uniform}(0,1)$, which places essentially all mass in regime (1) and almost none in regime (2). That mismatch is the subject of this appendix.
+
+## The Moderate-Deviation Principle for the Posterior {#sec-moddev-mdp}
+
+::: {.callout-note}
+## Theorem D.1: MDP for Posterior Quantiles (informal)
+Under the regularity conditions of @sec-proofs plus a finite exponential-moment condition on the score, the standardized posterior deviation $(\theta - \hat{\theta}_n)/\sigma_n$, evaluated on the moderate scale $a_n$, satisfies a large-deviation principle with speed $a_n^2$ and Gaussian rate function $I(x) = x^2/2$:
+$$
+\pi_n\!\left( \frac{\theta - \hat{\theta}_n}{\sigma_n} > a_n x \,\Big|\, y_{1:n} \right) \asymp \exp\!\left( -a_n^2 \cdot \frac{x^2}{2} \right).
+$$
+Consequently the moderate-zone posterior quantile admits the expansion
+$$
+Q_n(\tau_n) = \hat{\theta}_n + \sigma_n \left[ \Phi^{-1}(\tau_n) + \frac{\kappa_3}{6} h(\tau_n) + O(1/a_n^2) \right],
+$$
+where $\kappa_3$ is the standardized posterior skewness and $h$ is the first Edgeworth correction term.
+:::
+
+Two consequences are worth stating explicitly:
+
+**(D.1a) The tail is Gaussian to leading order.** The target the IQN must learn in the moderate zone is not exotic: it is $\Phi^{-1}(\tau_n)$ plus a skewness correction. The failure to learn it is therefore a *learning* failure, not an approximation-theoretic impossibility.
+
+**(D.1b) The density-quantile decays exponentially.** The posterior density at the moderate quantile, $f_n(Q_n(\tau_n))$, behaves as $\exp(-a_n^2 c) \cdot (\text{polynomial terms})$, exponentially small. This single fact drives the analysis in @sec-moddev-mechanism.
+
+## Why GBC Under-Resolves the Moderate Zone {#sec-moddev-mechanism}
+
+Two mechanisms compound to cause tail under-coverage.
+
+**Mechanism 1: under-sampling.** With $\tau \sim \text{Uniform}(0,1)$, the expected number of training draws landing in the moderate zone $\{\tau : \tau < \tau_n\}$ is $N \cdot \tau_n = N \cdot \exp(-a_n^2 c)$. For any $a_n$ growing even slowly, this is negligible. The network extrapolates the tail rather than learning it.
+
+**Mechanism 2: pinball-loss flattening.** The excess pinball risk from a quantile error $\delta_n(\tau) = \hat{G}(\tau) - Q_n(\tau)$ is, to second order,
+$$
+\mathbb{E}[\rho_\tau(\theta - \hat{G}(\tau))] - \mathbb{E}[\rho_\tau(\theta - Q_n(\tau))] \approx \tfrac{1}{2} f_n(Q_n(\tau)) \cdot \delta_n(\tau)^2.
+$$
+Integrating over $\tau$ gives the excess CRPS:
+$$
+\Delta\text{CRPS} = \int_0^1 f_n(Q_n(\tau)) \cdot \delta_n(\tau)^2 \, d\tau.
+$$
+By (D.1b), the weight $f_n(Q_n(\tau))$ is exponentially small in the moderate zone. So a large tail error $\delta_n$ contributes almost nothing to CRPS. The training objective barely penalizes tail mistakes: the gradient signal there is exponentially weak.
+
+::: {.callout-important}
+## The Central Tension
+CRPS (and therefore the pinball training objective) weights quantile level $\tau$ by the density-quantile $f_n(Q_n(\tau))$, which is exponentially small in the tails. **Interval coverage weights every $\tau$ equally.** A network can therefore achieve near-optimal CRPS while having catastrophically wrong tail coverage. This is the theoretical explanation of the Chapter 14 failure, and it shows the symptom is not an artifact of one architecture: *any* CRPS-trained quantile model is exposed to it.
+:::
+
+**Predictive Bayes-risk decomposition.** Split the integrated risk at a moderate cut $\delta$:
+$$
+\Delta\text{CRPS} = \underbrace{\int_{[\delta,1-\delta]} f_n \delta_n^2 \, d\tau}_{\text{central: } O(n^{-1})} + \underbrace{\int_{\text{tails}} f_n \delta_n^2 \, d\tau}_{\text{tail: exp. small weight}}.
+$$
+The central term is controlled by the BvM rate from @sec-proofs. The tail term has exponentially small *weight*, but the *error* $\delta_n$ is uncontrolled; and coverage, unlike CRPS, sees the error directly, not the weighted error.
+
+## A Tail-Aware Remedy: Tilted-$\tau$ Sampling {#sec-moddev-remedy}
+
+The theory prescribes a fix that is different from, and complementary to, Chapter 14's conformal patch. Replace uniform $\tau$-sampling with an importance distribution $q(\tau)$ that concentrates near 0 and 1, and reweight the loss:
+$$
+L = \mathbb{E}_{\tau \sim q}\!\left[ \frac{1}{q(\tau)} \cdot \rho_\tau(\theta - \hat{G}(\tau, z)) \right].
+$$
+The $1/q(\tau)$ weight keeps the estimator of the CRPS integral unbiased, while $q$ redirects gradient samples into the moderate zone.
+
+::: {.callout-note}
+## Proposition D.2: Tail Coverage Improvement (informal)
+Choosing $q(\tau) \propto f_n(Q_n(\tau))^{-1/2}$ ,  oversampling in inverse proportion to the square-root density-quantile ,  equalizes the per-$\tau$ gradient signal-to-noise ratio across the unit interval, and reduces the worst-case tail coverage error from $O(1)$ to $O(a_n / \sqrt{N})$.
+:::
+
+**Practical version.** Use a logit-normal distribution: $\tau = \sigma(s \cdot Z)$ where $Z \sim N(0,1)$ and $\sigma(\cdot)$ is the logistic function. The tilt parameter $s > 0$ controls how much mass is pushed to the tails; $s = 1$ recovers a distribution close to uniform, while larger $s$ concentrates near 0 and 1. Choose $s$ from the range-based SNR diagnostic of @sec-calibration. This gives a single, theoretically motivated knob with no other hyperparameters.
+
+```python
+# Tilted-tau sampler (drop-in replacement for torch.rand)
+def tilted_tau(batch_size, s=2.0):
+    z = torch.randn(batch_size, 1)
+    return torch.sigmoid(s * z)
+```
+
+**Critical SNR.** Combining Mechanisms 1 and 2, there is a critical signal-to-noise ratio $\text{SNR}^*$ above which uniform-$\tau$ training cannot resolve the tails with $N$ simulations. To leading order,
+$$
+\text{SNR}^* \asymp \frac{\log N}{a_n^2},
+$$
+so the larger the simulation budget, the higher the SNR the method tolerates, but only logarithmically. Tilted sampling raises $\text{SNR}^*$ from logarithmic to polynomial in $N$. This makes precise, and improves on, the empirical "10:1 in sd terms" threshold quoted in @sec-calibration.
+
+## Implications and Scope {#sec-moddev-scope}
+
+**Link to Chapter 12 (MEU).** Expected utility for a tail-sensitive utility (CVaR, ruin probability, rare-event cost) is an integral dominated by the moderate zone. @sec-meu-insurance should be read with this appendix in mind: the density-free MEU computation is only as good as the tail of the learned quantile function, and tilted-$\tau$ training is what makes it trustworthy for tail-sensitive objectives.
+
+**Relationship to Chapter 14.** The two failures are distinct. Chapter 14 describes an architecture-driven failure at fixed $\tau$ in the CLT zone, fixed by the het-MLP ensemble. Appendix D describes a sampling-and-loss-geometry failure for $\tau \to 0/1$ in the moderate zone, fixed by tilted sampling. A model can need *both* fixes; apply them in sequence.
+
+**Scope.** The Gaussian leading-order rate relies on BvM regularity. For irregular models (boundary parameters, non-identifiability, the bimodal posteriors of @sec-bi-bimodal) the moderate-zone rate function is non-Gaussian; the analysis here does not apply directly. Extending moderate-deviation theory to non-regular posteriors is open work.
+
+## Exercises {#sec-moddev-exercises}
+
+1. Verify Theorem D.1 numerically for the normal-normal model: compute $Q_n(\tau_n)$ from the exact posterior and compare against the MDP expansion for $\tau_n \in \{10^{-3}, 10^{-5}, 10^{-7}\}$, using $n = 1000$ observations.
+
+2. Train two IQNs on the motorcycle dataset (@sec-iqn-motorcycle): one with uniform $\tau \sim \text{Uniform}(0,1)$ and one with logit-normal tilted $\tau$ ($s = 2$). Compare tail coverage at the 99\% and 99.9\% nominal levels on a held-out test set.
+
+3. Derive the critical SNR formula $\text{SNR}^* \asymp \log N / a_n^2$ from the two-mechanism decomposition above.
+
+4. Show that CRPS can be driven arbitrarily close to its minimum while 99\%-interval coverage stays below 50\%. Construct an explicit quantile function $\hat{G}$ that achieves this on the normal-normal model.

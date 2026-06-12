@@ -2,7 +2,7 @@
 
 > "*The idea of maximizing expected utility is the cornerstone of rational decision-making under uncertainty.*" -- Leonard Savage
 
-The previous chapters developed the GBC machinery for posterior inference and prediction. We learned how to simulate from priors and likelihoods, train quantile neural networks, and construct posterior distributions---all without evaluating densities. But inference is rarely the final goal. We observe data to *make decisions*.
+The previous chapters developed the GBC machinery for posterior inference and prediction. We learned how to simulate from priors and likelihoods, train quantile neural networks, and construct posterior distributions, all without evaluating densities. But inference is rarely the final goal. We observe data to *make decisions*.
 
 A doctor interprets diagnostic results to choose a treatment. A portfolio manager reads market data to allocate capital. An engineer analyzes sensor readings to set control parameters. In each case, the statistical model is a means to an end: optimal action under uncertainty.
 
@@ -10,13 +10,13 @@ The classical framework for optimal decision-making is *maximum expected utility
 $$
 d^\star(y) = \arg\max_d \; \mathbb{E}_{\theta \mid y}[U(d, \theta)] = \arg\max_d \int U(d, \theta) \, p(\theta \mid y) \, d\theta.
 $$
-The standard approach computes the posterior $p(\theta \mid y)$ first and then evaluates the integral by Monte Carlo. This two-step procedure is wasteful. Monte Carlo requires many samples in regions of high posterior probability, but utility functions often place high weight on tail events---rare but consequential outcomes like portfolio crashes or treatment failures. The expected utility integral and the posterior integral have different structures, and solving one does not efficiently solve the other.
+The standard approach computes the posterior $p(\theta \mid y)$ first and then evaluates the integral by Monte Carlo. This two-step procedure is wasteful. Monte Carlo requires many samples in regions of high posterior probability, but utility functions often place high weight on tail events, rare but consequential outcomes like portfolio crashes or treatment failures. The expected utility integral and the posterior integral have different structures, and solving one does not efficiently solve the other.
 
 This chapter shows that GBC provides a more direct path. A classical identity connects expected utility to quantile functions:
 $$
 \mathbb{E}[U] = \int_0^1 F_U^{-1}(\tau) \, d\tau.
 $$ {#eq-meu-quantile-identity}
-The expected utility is the area under the quantile function of the utility random variable. If we can learn the quantile function of the utility distribution, we can compute expected utility by simple numerical integration---no density evaluation required.
+The expected utility is the area under the quantile function of the utility random variable. If we can learn the quantile function of the utility distribution, we can compute expected utility by simple numerical integration, no density evaluation required.
 
 We develop this idea in several steps. @sec-meu-quantile-identity establishes the quantile identity and its connection to Lorenz curves and the Gini coefficient. @sec-meu-yaari introduces Yaari's dual theory, which replaces outcome distortion with probability distortion. @sec-meu-wang shows that Bayesian updating itself can be viewed as a Wang distortion, connecting prior-to-posterior quantile maps to risk measures from finance. @sec-meu-augmentation develops the data augmentation trick that enables efficient computation. @sec-meu-algorithm presents the complete GenBayes-MEU algorithm. @sec-meu-portfolio applies the method to portfolio optimization. @sec-meu-drug-development walks through a pharmaceutical go/no-go decision. @sec-meu-insurance connects CVaR and Wang distortions to insurance pricing. @sec-meu-economics discusses further applications in economics and risk management.
 
@@ -27,7 +27,7 @@ We begin with the identity that makes density-free expected utility computation 
 
 Let $U$ be a non-negative random variable with CDF $F_U$ and finite mean $\mu = \mathbb{E}[U]$. The **quantile function** $F_U^{-1}(\tau) = \inf\{u : F_U(u) \geq \tau\}$ provides a complete description of the distribution of $U$. The following identity expresses the expectation as an integral over quantiles.
 
-Instead of integrating the random variable against its density---which requires knowing the density---we integrate the quantile function over the unit interval. The quantile function is a non-decreasing rearrangement of the random variable, and its integral over $[0,1]$ recovers the mean. For decision problems, this means we can compute expected utility by evaluating quantiles at a grid of probability levels and averaging. No likelihood, no normalizing constant, no density estimation.
+Instead of integrating the random variable against its density, which requires knowing the density, we integrate the quantile function over the unit interval. The quantile function is a non-decreasing rearrangement of the random variable, and its integral over $[0,1]$ recovers the mean. For decision problems, this means we can compute expected utility by evaluating quantiles at a grid of probability levels and averaging. No likelihood, no normalizing constant, no density estimation.
 
 ::: {.callout-tip appearance="simple" title="Proposition 12.1: Quantile Representation of Expectations"}
 For any random variable $U$ with $\mathbb{E}[|U|] < \infty$,
@@ -66,9 +66,9 @@ $$
 G = 2 \int_0^1 \left(p - \mathcal{L}(p)\right) dp = 1 - 2 \int_0^1 \mathcal{L}(p) \, dp.
 $$ {#eq-gini}
 
-The Gini coefficient satisfies $0 \leq G \leq 1$, where $G = 0$ corresponds to perfect equality (all outcomes identical) and $G = 1$ to maximal inequality. In the context of utility distributions, the Gini coefficient measures how "spread out" the utility random variable is. A decision with low Gini coefficient has more predictable utility---less risk.
+The Gini coefficient satisfies $0 \leq G \leq 1$, where $G = 0$ corresponds to perfect equality (all outcomes identical) and $G = 1$ to maximal inequality. In the context of utility distributions, the Gini coefficient measures how "spread out" the utility random variable is. A decision with low Gini coefficient has more predictable utility, less risk.
 
-*Numerical computation.* The quantile identity @eq-quantile-expectation converts expected utility computation into numerical integration of a monotone function on $[0, 1]$. @yakowitz1978weighted showed that the trapezoidal rule applied to quantile functions achieves an $O(N^{-4})$ mean-squared error rate---far better than the $O(N^{-1})$ rate of standard Monte Carlo.
+*Numerical computation.* The quantile identity @eq-quantile-expectation converts expected utility computation into numerical integration of a monotone function on $[0, 1]$. @yakowitz1978weighted showed that the trapezoidal rule applied to quantile functions achieves an $O(N^{-4})$ mean-squared error rate, far better than the $O(N^{-1})$ rate of standard Monte Carlo.
 
 The gain is substantial. To achieve four-digit accuracy, standard Monte Carlo requires roughly $10^8$ samples ($N^{-1/2} \approx 10^{-4}$), whereas the quantile trapezoidal rule needs only about $N \approx 32$ samples ($N^{-2} \approx 10^{-3}$, or more precisely, the constant in the $O(N^{-4})$ bound is small for smooth quantile functions). In practice, we use $K = 100$ to $500$ quantile evaluations, which provides far more accuracy than millions of Monte Carlo draws.
 
@@ -80,7 +80,7 @@ $$
 satisfies $\mathbb{E}[(\hat{\mu}_N - \mu)^2] \leq M / N^4$ for some constant $M$.
 :::
 
-The proof uses the classical error bound for the trapezoidal rule on each subinterval, together with moment bounds on the spacings of uniform order statistics. The key observation is that $\sum_{i} Z_i^3$, where $Z_i = U_{(i)} - U_{(i-1)}$ are the spacings, has moments that decay as $N^{-4}$ in the squared sum. Specifically, one shows that $|\hat{\mu}_N - \mu| \leq \frac{C}{12}\sum_{i=1}^{N+1} Z_i^3$ where $C$ bounds $|Q''|$. Taking expectations and using the moment formulas for uniform spacings---$\mathbb{E}[Z_i^6] = 6! \, n!/(n+6)!$ and $\mathbb{E}[Z_i^3 Z_j^3] = (3!)^2 \, n!/(n+6)!$ for $i \neq j$---yields the $O(N^{-4})$ bound.
+The proof uses the classical error bound for the trapezoidal rule on each subinterval, together with moment bounds on the spacings of uniform order statistics. The key observation is that $\sum_{i} Z_i^3$, where $Z_i = U_{(i)} - U_{(i-1)}$ are the spacings, has moments that decay as $N^{-4}$ in the squared sum. Specifically, one shows that $|\hat{\mu}_N - \mu| \leq \frac{C}{12}\sum_{i=1}^{N+1} Z_i^3$ where $C$ bounds $|Q''|$. Taking expectations and using the moment formulas for uniform spacings, $\mathbb{E}[Z_i^6] = 6! \, n!/(n+6)!$ and $\mathbb{E}[Z_i^3 Z_j^3] = (3!)^2 \, n!/(n+6)!$ for $i \neq j$, yields the $O(N^{-4})$ bound.
 
 In practice, we approximate the integral with a deterministic grid:
 $$
@@ -149,7 +149,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-@fig-lorenz-gini shows the Lorenz curves and quantile functions for three distributions with the same mean. The Lorenz curve departs further from the diagonal for distributions with heavier tails---these distributions have more "inequality" in their outcomes, as captured by the Gini coefficient. The quantile functions all have the same area (equal to the mean of 1), but differ dramatically in shape. The exponential and log-normal quantile functions rise steeply near $\tau = 1$, reflecting the concentration of total utility in the upper tail.
+@fig-lorenz-gini shows the Lorenz curves and quantile functions for three distributions with the same mean. The Lorenz curve departs further from the diagonal for distributions with heavier tails, these distributions have more "inequality" in their outcomes, as captured by the Gini coefficient. The quantile functions all have the same area (equal to the mean of 1), but differ dramatically in shape. The exponential and log-normal quantile functions rise steeply near $\tau = 1$, reflecting the concentration of total utility in the upper tail.
 
 
 ## Yaari's Dual Theory {#sec-meu-yaari}
@@ -166,9 +166,9 @@ $$
 $$ {#eq-yaari-dual}
 where $S_X(u) = 1 - F_X(u) = P(X > u)$ is the survival function and $g : [0,1] \to [0,1]$ is a *distortion function* satisfying $g(0) = 0$ and $g(1) = 1$.
 
-A distortion function $g$ transforms probabilities. If $g$ is convex, then $g(p) \leq p$ for $p$ near 0 and $g(p) \geq p$ for $p$ near 1---the agent overweights the probability of bad outcomes (low survival) and underweights the probability of good outcomes (high survival). This generates risk-averse behavior without any concavity in the utility function.
+A distortion function $g$ transforms probabilities. If $g$ is convex, then $g(p) \leq p$ for $p$ near 0 and $g(p) \geq p$ for $p$ near 1, the agent overweights the probability of bad outcomes (low survival) and underweights the probability of good outcomes (high survival). This generates risk-averse behavior without any concavity in the utility function.
 
-Conversely, if $g$ is concave, the agent overweights the probability of good outcomes---exhibiting risk-seeking behavior.
+Conversely, if $g$ is concave, the agent overweights the probability of good outcomes, exhibiting risk-seeking behavior.
 
 The *duality* between outcome distortion and probability distortion is central to Yaari's theory. Given a utility function $u$ with inverse $u^{-1}$, we can define the equivalent distortion function:
 $$
@@ -178,11 +178,19 @@ Under this choice of $g$, the dual functional $\widetilde{V}(X)$ produces the sa
 
 This duality has a consequence for computation. In the standard framework, evaluating $\mathbb{E}[u(X)]$ requires integrating the nonlinear function $u$ against the density $f_X$. In the dual framework, evaluating $\widetilde{V}(X)$ requires integrating the nonlinear function $g$ against the survival function $S_X$. The dual form is more natural for quantile-based methods because it operates directly on probabilities rather than on transformed payoffs.
 
-Using the change of variable $u = F_X^{-1}(\tau)$, the dual functional @eq-yaari-dual can be rewritten as
+When $g$ is differentiable and $X$ has finite mean, the dual functional @eq-yaari-dual can be rewritten as
 $$
 \widetilde{V}(X) = \int_0^1 F_X^{-1}(\tau) \cdot g'(1 - \tau) \, d\tau.
+$$ {#eq-yaari-quantile}
+*Derivation.* Apply integration by parts to $\int_0^\infty g(S_X(u))\,du$ with $v = u$ and $dw = dg(S_X(u)) = -g'(S_X(u))f_X(u)\,du$:
 $$
-When $g$ is differentiable, the weight $g'(1 - \tau)$ acts as a probability weighting function. If $g'$ is non-decreasing (i.e., $g$ is convex), higher quantiles receive more weight---reflecting risk aversion.
+\int_0^\infty g(S_X(u))\,du = \Bigl[u \cdot g(S_X(u))\Bigr]_0^\infty + \int_0^\infty u \cdot g'(S_X(u)) \cdot f_X(u)\,du.
+$$
+The boundary term vanishes ($g(S_X(0)) = g(1) = 1$ is finite, and $u \cdot g(S_X(u)) \to 0$ as $u \to \infty$ when $X$ has finite mean). Now change variable $\tau = F_X(u)$, so $u = F_X^{-1}(\tau)$, $f_X(u)\,du = d\tau$, and $S_X(u) = 1 - \tau$:
+$$
+\int_0^\infty u \cdot g'(S_X(u)) \cdot f_X(u)\,du = \int_0^1 F_X^{-1}(\tau) \cdot g'(1 - \tau)\,d\tau. \qquad\square
+$$
+When $g$ is differentiable, the weight $g'(1 - \tau)$ acts as a probability weighting function. If $g'$ is non-decreasing (i.e., $g$ is convex), higher quantiles receive more weight, reflecting risk aversion.
 
 The special case $g(p) = p$ (the identity distortion) gives
 $$
@@ -288,7 +296,7 @@ In the normal-normal model, the Wang distortion has a closed form. In general, t
 $$
 F_{\theta \mid y}^{-1}(\tau) = Q_\theta\!\left(g^{-1}(\tau; y)\right),
 $$
-where $g^{-1}(\cdot; y)$ is the data-dependent inverse distortion. The Wang distortion provides a useful parametric special case, but the neural network can represent arbitrary distortions---multimodal posteriors, skewed updates, and non-conjugate models that no parametric distortion family can capture.
+where $g^{-1}(\cdot; y)$ is the data-dependent inverse distortion. The Wang distortion provides a useful parametric special case, but the neural network can represent arbitrary distortions, multimodal posteriors, skewed updates, and non-conjugate models that no parametric distortion family can capture.
 
 
 ## Data Augmentation and Conditional Sufficient Statistics {#sec-meu-augmentation}
@@ -299,13 +307,13 @@ The computational trick that makes GBC-MEU practical is augmenting the training 
 $$
 \theta \stackrel{d}{=} Q_\theta(F_\theta(\theta)).
 $$ {#eq-parzen-identity}
-This is a tautology---applying the CDF and then the quantile function is the identity (in distribution). But it has a computational consequence: any random variable can be represented as a *composition* of two functions: the CDF (which maps to the uniform scale) and the quantile function (which maps back to the original scale).
+This is a tautology, applying the CDF and then the quantile function is the identity (in distribution). But it has a computational consequence: any random variable can be represented as a *composition* of two functions: the CDF (which maps to the uniform scale) and the quantile function (which maps back to the original scale).
 
 Moreover, for monotone transformations $h$, the quantile function has a compositional property:
 $$
 Q_{h(\theta)}(\tau) = h(Q_\theta(\tau)).
 $$
-This means that quantile functions compose under monotone transformations---the same compositional structure exploited by deep neural networks with monotone activation functions.
+This means that quantile functions compose under monotone transformations, the same compositional structure exploited by deep neural networks with monotone activation functions.
 
 The compositional property is what connects quantile methods to deep learning architectures. A deep network with monotone activations is, in effect, a sequence of quantile transformations. Each layer takes the quantile function from the previous layer and applies a learned monotone map. The utility function sits naturally as the outermost layer of this composition: given the posterior quantile $Q_{\theta \mid y}(\tau)$, the utility quantile is $Q_{U \mid d,y}(\tau) = U(d, Q_{\theta \mid y}(\tau))$ whenever $U(d, \cdot)$ is monotone in $\theta$.
 
@@ -313,11 +321,11 @@ The GBC framework exploits the identity @eq-parzen-identity by introducing indep
 $$
 \{(\theta^{(i)}, y^{(i)}, u^{(i)})\}_{i=1}^N.
 $$
-The noise outsourcing theorem (see @sec-noise-outsourcing) guarantees the existence of a function $H$ such that
+Theorem 4.1 (@sec-noise-outsourcing) says that any random variable can be written as a measurable function of a uniform. Applying it conditionally on $S(y)$: for each fixed value $s$ of the sufficient statistic, the conditional distribution $\theta \mid S(y) = s$ has a well-defined quantile function $F_{\theta \mid s}^{-1}$, and we can write $\theta \mid S(y) = s \stackrel{d}{=} F_{\theta \mid s}^{-1}(u)$ with $u \sim \mathrm{Uniform}(0,1)$ independent of $s$. Defining $H(s, \tau) := F_{\theta \mid s}^{-1}(\tau)$ and applying the theorem jointly over all $s$ (using measurable selection to construct a jointly measurable version of $H$), we obtain
 $$
 \theta \mid y \stackrel{d}{=} H(S(y), u),
 $$
-where $S(y)$ is a sufficient statistic (or summary statistic performing dimensionality reduction) and $u \sim \text{Uniform}(0,1)$. The function $H$ is precisely the posterior quantile function: $H(S(y), \tau) = F_{\theta \mid y}^{-1}(\tau)$.
+where $S(y)$ is a sufficient statistic (or summary statistic performing dimensionality reduction) and $u \sim \text{Uniform}(0,1)$ is independent of $S(y)$. The function $H$ is precisely the posterior quantile function: $H(S(y), \tau) = F_{\theta \mid S(y)}^{-1}(\tau)$.
 
 In many statistical models, the data $y = (y_1, \ldots, y_n)$ is high-dimensional, but the posterior depends on $y$ only through a low-dimensional sufficient statistic $S(y)$. For the normal mean $S(y) = \bar{y}$; for the normal variance $S(y) = \sum (y_i - \bar{y})^2$; for the exponential rate and the binomial both reduce to $S(y) = \sum y_i$.
 
@@ -327,7 +335,7 @@ $$
 $$
 This dramatically reduces the dimensionality of the learning problem. The quantile neural network takes inputs $(S(y), \tau)$ rather than $(y_1, \ldots, y_n, \tau)$.
 
-For models without known sufficient statistics, we can learn $S$ using a deep neural network. @polson2024generative show that the summary statistic can be learned independently of the quantile map: a simple $\ell_2$ regression of $\theta$ on $y$ provides a good approximation to the posterior mean, which often serves as a near-sufficient summary.
+For models without known sufficient statistics, we can learn $S$ using a deep neural network. @polson2024generative show that the summary statistic can be learned independently of the quantile map: a simple $\ell_2$ regression of $\theta$ on $y$ provides a good approximation to the posterior mean, which is often a near-sufficient summary.
 
 The augmentation extends to utility computations. Given the utility function $U(d, \theta)$ and the posterior quantile map $H(S(y), u)$, the distributional utility is
 $$
@@ -383,7 +391,7 @@ $$
 *Output:* Optimal decision $d^\star(y_{\text{obs}})$ and the full utility quantile function $\tau \mapsto H_\phi(S(y_{\text{obs}}), \tau, d)$ for any $d$.
 :::
 
-*Amortization.* The expensive computation (Steps 1--4) is performed once during training. At test time (Steps 5--6), evaluating the expected utility for a new dataset $y_{\text{obs}}$ requires only forward passes through the network---no new simulations, no MCMC, no density evaluations.
+*Amortization.* The expensive computation (Steps 1--4) is performed once during training. At test time (Steps 5--6), evaluating the expected utility for a new dataset $y_{\text{obs}}$ requires only forward passes through the network, no new simulations, no MCMC, no density evaluations.
 
 *Decision as input.* By including the decision $d$ as an input to the network, a single trained model handles the entire optimization problem. We do not need to retrain for each candidate decision. For continuous decision spaces, the network interpolates smoothly between training decisions.
 
@@ -406,7 +414,7 @@ The investor has exponential (CARA) utility:
 $$
 U(W) = -e^{-\gamma W},
 $$ {#eq-cara-utility}
-where $\gamma > 0$ is the coefficient of absolute risk aversion. The CARA (constant absolute risk aversion) utility has the convenient property that the optimal portfolio weight does not depend on the investor's wealth level. The negative exponential ensures that $U$ is increasing and concave: more wealth is always preferred, but with diminishing marginal utility. The parameter $\gamma$ controls how rapidly the marginal utility diminishes---a large $\gamma$ corresponds to a highly risk-averse investor who strongly penalizes downside outcomes.
+where $\gamma > 0$ is the coefficient of absolute risk aversion. The CARA (constant absolute risk aversion) utility has the convenient property that the optimal portfolio weight does not depend on the investor's wealth level. The negative exponential ensures that $U$ is increasing and concave: more wealth is always preferred, but with diminishing marginal utility. The parameter $\gamma$ controls how rapidly the marginal utility diminishes, a large $\gamma$ corresponds to a highly risk-averse investor who strongly penalizes downside outcomes.
 
 Since $W(\omega) \sim N((1-\omega)r_f + \omega\mu, \; \omega^2 \sigma^2)$, the expected utility has a closed form using the moment-generating function of the normal:
 $$
@@ -429,7 +437,7 @@ Since the utility is a monotone transformation of $W$, and $W$ is normally distr
 $$
 F_{Z_\omega}^{-1}(\tau) = -\exp\!\left(-\gamma\!\left[(1-\omega)r_f + \omega\mu + \omega\sigma\Phi^{-1}(\tau)\right]\right).
 $$
-But we do not need this formula---the quantile function can be estimated from simulated utility values by simply sorting them.
+But we do not need this formula, the quantile function can be estimated from simulated utility values by simply sorting them.
 
 ```{python}
 #| eval: true
@@ -498,15 +506,15 @@ plt.show()
 omega_mc_star = omega_grid[np.argmax(EU_mc)]
 ```
 
-@fig-portfolio-meu demonstrates the quantile approach to portfolio optimization. The left panel shows the quantile function of the utility random variable for a fixed portfolio weight. The area under this curve---computed by the trapezoidal rule---gives the expected utility. The right panel sweeps over all portfolio weights, computing the expected utility at each one. The quantile-based estimate closely tracks the analytical solution, and the estimated optimum matches the Kelly criterion $\omega^\star = 0.40$.
+@fig-portfolio-meu demonstrates the quantile approach to portfolio optimization. The left panel shows the quantile function of the utility random variable for a fixed portfolio weight. The area under this curve, computed by the trapezoidal rule, gives the expected utility. The right panel sweeps over all portfolio weights, computing the expected utility at each one. The quantile-based estimate closely tracks the analytical solution, and the estimated optimum matches the Kelly criterion $\omega^\star = 0.40$.
 
-**Adding parameter uncertainty.** The GBC approach shows its strength when we add parameter uncertainty. Suppose the expected return $\mu$ is unknown with prior $\mu \sim N(\mu_0, \sigma_0^2)$. The analytical solution now involves integrating over both the return randomness and the parameter uncertainty---a nested integral that is cumbersome to compute in closed form.
+**Adding parameter uncertainty.** The GBC approach shows its strength when we add parameter uncertainty. Suppose the expected return $\mu$ is unknown with prior $\mu \sim N(\mu_0, \sigma_0^2)$. The analytical solution now involves integrating over both the return randomness and the parameter uncertainty, a nested integral that is cumbersome to compute in closed form.
 
 With the quantile approach, the solution is straightforward. We simply simulate from the full hierarchical model:
 $$
 \mu^{(i)} \sim N(\mu_0, \sigma_0^2), \quad R^{(i)} \sim N(\mu^{(i)}, \sigma^2), \quad W^{(i)} = (1-\omega)r_f + \omega R^{(i)},
 $$
-compute utilities $Z^{(i)} = -e^{-\gamma W^{(i)}}$, and apply the same quantile integration. No additional mathematical derivation is needed---the simulation automatically marginalizes over parameter uncertainty.
+compute utilities $Z^{(i)} = -e^{-\gamma W^{(i)}}$, and apply the same quantile integration. No additional mathematical derivation is needed, the simulation automatically marginalizes over parameter uncertainty.
 
 ```{python}
 #| eval: true
@@ -566,7 +574,7 @@ plt.show()
 om_star_uncertain = omega_grid[np.argmax(EU_uncertain)]
 ```
 
-@fig-portfolio-uncertainty shows the effect of parameter uncertainty on the optimal portfolio allocation. When the expected return is uncertain, the optimal weight shrinks---the investor becomes more conservative because parameter uncertainty adds risk beyond the inherent return volatility. This phenomenon, sometimes called *estimation risk* or the *Bayesian shrinkage effect*, is difficult to capture in a plug-in framework but arises naturally from the GBC approach.
+@fig-portfolio-uncertainty shows the effect of parameter uncertainty on the optimal portfolio allocation. When the expected return is uncertain, the optimal weight shrinks, the investor becomes more conservative because parameter uncertainty adds risk beyond the inherent return volatility. This phenomenon, sometimes called *estimation risk* or the *Bayesian shrinkage effect*, is difficult to capture in a plug-in framework but arises naturally from the GBC approach.
 
 **Multi-asset extension.** The framework extends directly to multiple assets. With $p$ risky assets and weights $\omega = (\omega_1, \ldots, \omega_p)$ summing to at most 1, the portfolio return is
 $$
@@ -574,14 +582,14 @@ W(\omega) = \left(1 - \sum_j \omega_j\right) r_f + \sum_j \omega_j R_j, \quad R 
 $$
 The decision space is now multi-dimensional, and the quantile neural network takes $(\omega, S(y), \tau)$ as input. The grid search in Step 6 of the algorithm becomes a multi-dimensional optimization, but the core quantile machinery is unchanged. For moderate-dimensional portfolios (say, 5--20 assets), a random search or evolutionary optimizer over the weight simplex is effective. For larger portfolios, gradient-based optimization through the differentiable quantile network is preferable.
 
-Consider a concrete three-asset example. An investor allocates wealth across a risk-free bond ($r_f = 0.03$), a stock index ($\mu_1 = 0.10$, $\sigma_1 = 0.20$), a corporate bond fund ($\mu_2 = 0.06$, $\sigma_2 = 0.08$), and an emerging market fund ($\mu_3 = 0.14$, $\sigma_3 = 0.30$), with correlation matrix capturing the fact that stocks and emerging markets are positively correlated while bonds provide diversification. The portfolio return is $W(\omega) = (1 - \omega_1 - \omega_2 - \omega_3)r_f + \omega_1 R_1 + \omega_2 R_2 + \omega_3 R_3$, and the GBC-MEU algorithm searches over the weight simplex to find the allocation that maximizes expected CARA utility. The key advantage over classical mean-variance optimization is that the GBC approach naturally handles non-normal return distributions, parameter uncertainty in $\mu$ and $\Sigma$, and non-quadratic utility functions---all within the same quantile integration framework.
+Consider a concrete three-asset example. An investor allocates wealth across a risk-free bond ($r_f = 0.03$), a stock index ($\mu_1 = 0.10$, $\sigma_1 = 0.20$), a corporate bond fund ($\mu_2 = 0.06$, $\sigma_2 = 0.08$), and an emerging market fund ($\mu_3 = 0.14$, $\sigma_3 = 0.30$), with correlation matrix capturing the fact that stocks and emerging markets are positively correlated while bonds provide diversification. The portfolio return is $W(\omega) = (1 - \omega_1 - \omega_2 - \omega_3)r_f + \omega_1 R_1 + \omega_2 R_2 + \omega_3 R_3$, and the GBC-MEU algorithm searches over the weight simplex to find the allocation that maximizes expected CARA utility. The key advantage over classical mean-variance optimization is that the GBC approach naturally handles non-normal return distributions, parameter uncertainty in $\mu$ and $\Sigma$, and non-quadratic utility functions, all within the same quantile integration framework.
 
 
 ## Drug Development Decision {#sec-meu-drug-development}
 
 Pharmaceutical development decisions involve large stakes, deep uncertainty, and utility functions that differ substantially from simple expected profit maximization.
 
-Consider a pharmaceutical company that has completed a Phase II clinical trial and must decide whether to proceed to Phase III. The Phase III trial is the final and most expensive step before regulatory approval. The company faces a binary decision: $d \in \{\text{go}, \text{stop}\}$. If the company stops ($d = \text{stop}$), the payoff is zero---no further costs, no revenue. If the company proceeds ($d = \text{go}$), it incurs a trial cost $C$ and faces an uncertain outcome. Let $\theta$ denote the true treatment effect (e.g., the difference in response rates between treatment and placebo). If the Phase III trial succeeds---meaning the treatment effect exceeds a regulatory threshold $\theta_{\min}$ and achieves statistical significance---the company earns revenue $R$ from marketing the drug. If the trial fails, the company loses the trial cost with no offsetting revenue.
+Consider a pharmaceutical company that has completed a Phase II clinical trial and must decide whether to proceed to Phase III. The Phase III trial is the final and most expensive step before regulatory approval. The company faces a binary decision: $d \in \{\text{go}, \text{stop}\}$. If the company stops ($d = \text{stop}$), the payoff is zero, no further costs, no revenue. If the company proceeds ($d = \text{go}$), it incurs a trial cost $C$ and faces an uncertain outcome. Let $\theta$ denote the true treatment effect (e.g., the difference in response rates between treatment and placebo). If the Phase III trial succeeds, meaning the treatment effect exceeds a regulatory threshold $\theta_{\min}$ and achieves statistical significance, the company earns revenue $R$ from marketing the drug. If the trial fails, the company loses the trial cost with no offsetting revenue.
 
 The probability of Phase III success depends on $\theta$ through both the treatment effect magnitude and the statistical power. For a trial of sample size $n_{\text{III}}$, the success probability given $\theta$ is approximately
 $$
@@ -684,7 +692,7 @@ plt.show()
 
 @fig-drug-decision illustrates the drug development decision. The left panel shows the payoff distribution conditional on a moderately positive Phase II result ($\hat{\theta}_{II} = 0.25$). The distribution is clearly bimodal: one mass at $-C = -200$ million (trial failure) and another at $R - C = 1000$ million (trial success). The right panel plots the expected utility of "go" as a function of the Phase II effect estimate. The crossover with the "stop" line identifies the minimum Phase II signal needed to justify proceeding to Phase III.
 
-The quantile-based approach is well suited here. The payoff distribution is far from Gaussian---it is a mixture of two point masses, so standard normal approximations to the expected utility fail. The CARA utility strongly penalizes the downside (losing $200 million), making the tail behavior critical. The quantile function captures this tail precisely. And the GBC framework naturally propagates the posterior uncertainty about $\theta$ through the nonlinear success probability and into the utility distribution, all without requiring closed-form expressions for any intermediate step.
+The quantile-based approach is well suited here. The payoff distribution is far from Gaussian, it is a mixture of two point masses, so standard normal approximations to the expected utility fail. The CARA utility strongly penalizes the downside (losing $200 million), making the tail behavior critical. The quantile function captures this tail precisely. And the GBC framework naturally propagates the posterior uncertainty about $\theta$ through the nonlinear success probability and into the utility distribution, all without requiring closed-form expressions for any intermediate step.
 
 
 ## Insurance Pricing via Wang Distortion {#sec-meu-insurance}
@@ -696,7 +704,7 @@ $$
 \Pi_g = \int_0^\infty g(S_L(x)) \, dx.
 $$ {#eq-insurance-premium}
 
-Without distortion ($g(p) = p$), the premium equals $\mathbb{E}[L]$---the actuarially fair price. A convex distortion $g$ inflates the survival probabilities: the insurer acts as if losses are more likely than they actually are, generating a risk loading. The more convex $g$ is, the larger the loading.
+Without distortion ($g(p) = p$), the premium equals $\mathbb{E}[L]$, the actuarially fair price. A convex distortion $g$ inflates the survival probabilities: the insurer acts as if losses are more likely than they actually are, generating a risk loading. The more convex $g$ is, the larger the loading.
 
 The one-parameter Wang distortion uses
 $$
@@ -719,7 +727,7 @@ From a GBC perspective, computing the insurance premium @eq-insurance-premium re
 $$
 \Pi_g = \int_0^1 F_L^{-1}(\tau) \cdot g'(1 - \tau) \, d\tau \approx \frac{1}{K} \sum_{k=1}^K F_L^{-1}\!\left(\frac{k-0.5}{K}\right) \cdot g'\!\left(1 - \frac{k-0.5}{K}\right).
 $$
-This is a weighted average of quantiles, where the weights come from the derivative of the distortion function. The computation is a simple post-processing step on the quantile network output---no retraining required. Changing the distortion (and hence the risk loading) requires only changing the weights, not relearning the loss distribution.
+This is a weighted average of quantiles, where the weights come from the derivative of the distortion function. The computation is a simple post-processing step on the quantile network output, no retraining required. Changing the distortion (and hence the risk loading) requires only changing the weights, not relearning the loss distribution.
 
 ```{python}
 #| eval: true
@@ -788,7 +796,7 @@ plt.show()
 
 @fig-insurance-pricing illustrates the Wang distortion approach to insurance pricing. The left panel shows how the distortion function changes with the market price of risk $\lambda$: larger $\lambda$ pushes the distortion further from the diagonal, inflating survival probabilities more aggressively. The right panel compares the premium-to-expected-loss ratio for log-normal and Pareto loss distributions. The Pareto distribution, with its heavier tail, commands a substantially larger risk loading at any given $\lambda$. This is exactly the behavior we want: the distortion-based premium automatically adjusts to the tail risk of the loss distribution, charging more for catastrophic risks.
 
-The practical workflow for an insurer using GBC is straightforward. Given historical loss data, the insurer trains an IQN to learn the loss quantile function $F_{L \mid \text{covariates}}^{-1}(\tau)$, where covariates might include policyholder characteristics, geographic region, or coverage level. The premium for any new policy is then computed by evaluating the distorted quantile integral with the company's chosen $\lambda$. Changing the risk loading requires no retraining---only reweighting the quantile evaluations.
+The practical workflow for an insurer using GBC is straightforward. Given historical loss data, the insurer trains an IQN to learn the loss quantile function $F_{L \mid \text{covariates}}^{-1}(\tau)$, where covariates might include policyholder characteristics, geographic region, or coverage level. The premium for any new policy is then computed by evaluating the distorted quantile integral with the company's chosen $\lambda$. Changing the risk loading requires no retraining, only reweighting the quantile evaluations.
 
 
 ## Further Economic Applications {#sec-meu-economics}
@@ -809,6 +817,123 @@ $$
 where $\theta_j$ is the uncertain demand for product $j$, $r_j$ is the revenue per unit sold, and $c_j$ is the cost per unit ordered. The min function makes this a newsvendor problem. The optimal solution depends on the posterior distribution of demand given observed sales data. The GenBayes-MEU framework simulates demand scenarios, computes profits for each order quantity, and trains a quantile network to learn the full profit distribution. The optimal order quantity maximizes the expected utility integral.
 
 These applications share a common structure: an uncertain parameter $\theta$, a decision $d$, and a utility function $U(d, \theta)$. The GenBayes-MEU algorithm provides a unified, density-free approach to all of them. The same algorithmic template applies to any decision problem that can be simulated forward, regardless of the complexity of the model, the form of the utility function, or the shape of the posterior distribution.
+
+
+## The Newsvendor Problem {#sec-meu-newsvendor}
+
+The newsvendor problem is the simplest MEU example where the optimal decision is explicitly a quantile. A retailer orders $q$ units at cost $c$ per unit before demand is realized, sells at price $p > c$ per unit, and discards unsold inventory. Profit is:
+$$
+U(q, D) = p\,\min(D, q) - c\,q.
+$$ {#eq-meu-newsvendor-utility}
+
+Expected profit is $\mathbb{E}[U(q, D)] = p\,\mathbb{E}[\min(D, q)] - c\,q$. The first-order condition gives the classic *critical-ratio* formula:
+
+::: {.callout-note appearance="simple"}
+## The Critical-Ratio Result
+The optimal order quantity is
+$$
+q^* = F_D^{-1}\!\left(\frac{p - c}{p}\right),
+$$ {#eq-meu-critical-ratio}
+the $(p-c)/p$-quantile of the demand distribution. GBC makes this density-free: train an IQN on simulated demand, then read off $q^*$ as a single forward pass at $\tau = (p-c)/p$.
+:::
+
+When demand is uncertain (unknown mean or shape), the Bayesian extension replaces $F_D$ with the posterior predictive demand distribution. GBC handles this without a closed-form posterior: simulate demand realizations from the prior, update via IQN conditioning, and read off the critical-ratio quantile.
+
+*Illustration.* Suppose daily demand is log-normal: $D = e^{\mu + \sigma Z}$ with $Z \sim \mathcal{N}(0,1)$, $\sigma = 0.4$ known, and $\mu$ unknown with prior $\mu \sim \mathcal{N}(3, 0.5^2)$. We observe $n = 25$ past demand realizations and sell at $p = 10$, order cost $c = 3$ (critical ratio $= 0.7$).
+
+```{python}
+#| eval: true
+#| code-fold: true
+#| label: fig-meu-newsvendor
+#| fig-cap: "Bayesian newsvendor optimal order quantities. Left: GBC posterior distribution of $\\mu$ given 25 demand observations (histogram) vs exact normal posterior (black curve). Right: distribution of optimal order quantities $q^* = F_D^{-1}(0.7 \\mid \\mu)$ under the posterior, for normal demand (blue) and log-normal demand (orange). The dotted vertical line marks the oracle quantity at the true $\\mu$."
+import torch
+import torch.nn as nn
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy import stats
+
+torch.manual_seed(55)
+np.random.seed(55)
+
+sigma_D, mu_prior, sig_prior = 0.4, 3.0, 0.5
+n_past, p_sell, c_order = 25, 10.0, 3.0
+cr = (p_sell - c_order) / p_sell  # 0.7
+
+# Simulate training pairs (mu, y_bar from n_past log-normal demands)
+N_nv = 40_000
+mu_sim = np.random.normal(mu_prior, sig_prior, N_nv)
+ybar_sim = np.array([np.log(np.random.lognormal(m, sigma_D, n_past)).mean()
+                     for m in mu_sim])
+
+X_nv = torch.tensor(ybar_sim, dtype=torch.float32).unsqueeze(1)
+Y_nv = torch.tensor(mu_sim, dtype=torch.float32).unsqueeze(1)
+xm_nv, xs_nv = X_nv.mean(), X_nv.std()
+ym_nv, ys_nv = Y_nv.mean(), Y_nv.std()
+Xn_nv = (X_nv - xm_nv) / xs_nv
+Yn_nv = (Y_nv - ym_nv) / ys_nv
+
+class NVIQN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        M = 32
+        self.M = M
+        self.fc_tau = nn.Sequential(nn.Linear(M, 64), nn.ReLU())
+        self.fc_x = nn.Sequential(nn.Linear(1, 64), nn.ReLU())
+        self.head = nn.Sequential(nn.Linear(64, 64), nn.ReLU(), nn.Linear(64, 1))
+    def forward(self, x, tau):
+        i = torch.arange(self.M, dtype=torch.float32)
+        h_tau = self.fc_tau(torch.cos(i * torch.pi * tau))
+        h_x = self.fc_x(x)
+        h = h_x * h_tau.unsqueeze(0) if h_tau.dim() == 1 else h_x * h_tau
+        return self.head(h)
+
+model_nv = NVIQN()
+opt_nv = torch.optim.Adam(model_nv.parameters(), lr=3e-4)
+for _ in range(500):
+    idx = torch.randperm(N_nv)[:512]
+    x_b, y_b = Xn_nv[idx], Yn_nv[idx]
+    tau = torch.rand(512, 1)
+    r = y_b - model_nv(x_b, tau)
+    loss = torch.mean(torch.maximum(tau * r, (tau - 1) * r))
+    opt_nv.zero_grad(); loss.backward(); opt_nv.step()
+
+# Inference: observe 25 demands at true mu=3.2
+mu_true = 3.2
+d_obs = np.random.lognormal(mu_true, sigma_D, n_past)
+ybar_obs = np.log(d_obs).mean()
+
+# Exact posterior: mu | y_bar ~ N(mu_n, sig_n^2)
+prior_prec = 1 / sig_prior**2
+lik_prec = n_past / (sigma_D**2)
+sig_n = np.sqrt(1 / (prior_prec + lik_prec))
+mu_n = sig_n**2 * (mu_prior / sig_prior**2 + ybar_obs * n_past / sigma_D**2)
+
+model_nv.eval()
+z_in = torch.tensor([[(ybar_obs - xm_nv.item()) / xs_nv.item()]], dtype=torch.float32)
+with torch.no_grad():
+    taus_s = torch.rand(3000)
+    mu_samps = np.array([model_nv(z_in, t.item()).item() for t in taus_s])
+mu_samps = mu_samps * ys_nv.item() + ym_nv.item()
+
+# Optimal order quantities under posterior
+q_star_normal = np.exp(mu_samps + sigma_D * stats.norm.ppf(cr))
+q_oracle = np.exp(mu_true + sigma_D * stats.norm.ppf(cr))
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4))
+t_grid = np.linspace(mu_n - 4*sig_n, mu_n + 4*sig_n, 200)
+ax1.hist(mu_samps, bins=50, density=True, alpha=0.5, color='steelblue', label='GBC')
+ax1.plot(t_grid, stats.norm.pdf(t_grid, mu_n, sig_n), 'k-', lw=2, label='Exact posterior')
+ax1.set_xlabel(r'$\mu$'); ax1.set_title('Posterior of $\\mu$'); ax1.legend(fontsize=8)
+
+ax2.hist(q_star_normal, bins=50, density=True, alpha=0.5, color='steelblue', label='Log-normal demand')
+ax2.axvline(q_oracle, color='r', ls=':', lw=2, label=f'Oracle $q^*={q_oracle:.1f}$')
+ax2.set_xlabel('$q^*$'); ax2.set_title(f'Optimal order quantities ($\\tau={cr}$)'); ax2.legend(fontsize=8)
+plt.tight_layout(); plt.show()
+```
+
+The posterior distribution of $q^*$ in @fig-meu-newsvendor reflects both the parameter uncertainty about $\mu$ and the intrinsic demand variability. When the retailer has observed only 25 past demands, the posterior mean order quantity is close to the oracle but the distribution is wide: there is genuine uncertainty about whether to order 50 or 80 units. This uncertainty is irreducible without more data and should be communicated to the decision-maker. GBC makes it visible at no additional computational cost.
+
+The critical-ratio formula in @eq-meu-critical-ratio is notable for two reasons. First, it requires only a quantile of the demand distribution, not its full density or moments. This means GBC's quantile-function representation is exactly the right tool: the decision is a quantile look-up, and the IQN computes quantiles directly. Second, the formula is exact regardless of the demand distribution, conjugate or not. For a heavy-tailed log-normal demand with unknown parameters and a misspecified prior, the optimal Bayesian decision is still a quantile of the posterior predictive distribution: GBC computes it.
 
 
 ## Exercises {#sec-meu-exercises}
@@ -912,15 +1037,13 @@ Consider a two-asset portfolio where the risky assets have *Student-t* returns r
 :::
 
 ::: {#exr-meu-newsvendor}
-**Bayesian newsvendor with quantile integration.**
+**Extending the Bayesian newsvendor.**
 
-A retailer orders $d$ units of a perishable product before observing demand $\theta$. The profit is $U(d, \theta) = r \cdot \min(d, \theta) - c \cdot d$, where $r = 10$ is the selling price and $c = 4$ is the cost per unit. The prior on demand is $\theta \sim \text{Gamma}(50, 1)$ (mean 50, variance 50). After observing $n = 20$ days of sales data with average demand $\bar{y} = 55$, the posterior is $\theta \mid y \sim \text{Gamma}(50 + 20 \times 55, 1 + 20)$.
+The worked example in @sec-meu-newsvendor uses log-normal demand with unknown mean $\mu$ and known $\sigma = 0.4$. Extend that setup in the following directions.
 
-(a) Derive the posterior parameters and compute the posterior mean and variance.
+(a) Replace the log-normal demand with Gamma demand: $D \mid \alpha \sim \text{Gamma}(\alpha, 1/30)$ with prior $\alpha \sim \text{Gamma}(50, 1)$ (mean 50). After observing $n = 20$ days of demand with sample mean $\bar{y} = 55$, the posterior is $\alpha \mid y \sim \text{Gamma}(50 + n\bar{y}, 1 + n)$ by conjugacy. Train a GBC model for this Gamma demand case and compare the posterior predictive optimal order quantity to the conjugate formula.
 
-(b) Using the quantile identity, compute the expected profit $\mathbb{E}_{\theta \mid y}[U(d, \theta)]$ for each $d$ on a grid from 30 to 80. Plot the expected profit curve and identify the optimal order quantity $d^\star$.
+(b) The worked example uses $p = 10$, $c = 3$ (critical ratio 0.7). Rerun the example with $c = 7$ (critical ratio 0.3). How does the distribution of $q^*$ change? Is the retailer more or less sensitive to demand uncertainty when the critical ratio is low?
 
-(c) The classical newsvendor solution says $d^\star = F_\theta^{-1}(r/(r+c)) = F_\theta^{-1}(10/14)$. Verify that your quantile-based optimum matches this formula applied to the posterior distribution.
-
-(d) Now suppose the retailer has CARA utility with $\gamma = 0.05$ instead of linear profit. Recompute the optimal order quantity. Does the risk-averse retailer order more or less than the risk-neutral retailer? Explain.
+(c) Replace the risk-neutral profit utility with CARA utility $U(q, D) = -e^{-\gamma [p \min(D,q) - cq]}$ where $\gamma = 0.05$ (mild risk aversion). Using the GenBayes-MEU algorithm, find the optimal order quantity for the risk-averse retailer. Does the CARA retailer order more or less than the risk-neutral retailer?
 :::

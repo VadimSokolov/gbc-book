@@ -5,13 +5,14 @@ We collect the main notation used throughout the book. Symbols are grouped by ca
 ## Probability and Distributions
 
 | Symbol | Meaning | Introduced |
-|--------|---------|-----------|
+|-----|------|--------|
 | $F$, $F_Y$ | Cumulative distribution function (CDF) | @sec-quantiles |
 | $Q(\tau) = F^{-1}(\tau) = \inf\{y : F(y) \geq \tau\}$ | Quantile function (generalized inverse) | @sec-quantiles |
 | $Q^*(\tau, x) = F_{Y|X}^{-1}(\tau \mid x)$ | True conditional quantile function | @sec-noise-outsourcing |
 | $\tau \in (0,1)$ | Quantile level | @sec-quantiles |
 | $U \sim \text{Uniform}(0,1)$ | Standard uniform random variable | @sec-quantiles |
 | $\Phi(z)$, $\Phi^{-1}(\tau)$ | Standard normal CDF and quantile (probit) | @sec-quantiles |
+| $N(\mu, \sigma^2)$ | Normal distribution with mean $\mu$ and **variance** $\sigma^2$ (second argument is always variance, not std) | @sec-quantiles |
 | $Y \sim F$ | $Y$ distributed according to $F$ | @sec-quantiles |
 | $Y \mid X = x$ | Conditional distribution of $Y$ given $X = x$ | @sec-quantiles |
 | $Y \stackrel{d}{=} Z$ | Equality in distribution | @sec-noise-outsourcing |
@@ -24,7 +25,7 @@ We collect the main notation used throughout the book. Symbols are grouped by ca
 ## Loss Functions and Metrics
 
 | Symbol | Meaning | Introduced |
-|--------|---------|-----------|
+|-----|------|--------|
 | $\rho_\tau(u) = u\bigl(\tau - \mathbf{1}(u < 0)\bigr)$ | Pinball (check) loss at level $\tau$ | @sec-quantiles |
 | $\text{CRPS}(G, y) = 2\int_0^1 \rho_\tau(y - G(\tau))\,d\tau$ | Continuous Ranked Probability Score | @sec-quantiles |
 | $W_p(F, G) = \bigl(\int_0^1 |F^{-1}(\tau) - G^{-1}(\tau)|^p\,d\tau\bigr)^{1/p}$ | $p$-Wasserstein distance | @sec-noise-outsourcing |
@@ -33,19 +34,19 @@ We collect the main notation used throughout the book. Symbols are grouped by ca
 ## IQN Architecture
 
 | Symbol | Meaning | Introduced |
-|--------|---------|-----------|
+|-----|------|--------|
 | $\varphi(\tau) = \bigl(\cos(\pi j \tau)\bigr)_{j=1}^{M}$ | Cosine embedding of $\tau$ | @sec-iqn |
 | $M$ | Number of cosine embedding frequencies | @sec-iqn |
-| $\phi$ | Neural network parameters (weights and biases) | @sec-iqn |
+| $\phi$ | IQN network parameters (weights and biases); in @sec-iqn also written $\theta$ | @sec-iqn |
 | $G_\phi(\tau, x)$ | IQN output: learned quantile function | @sec-iqn |
-| $\psi_\phi(x)$ | Covariate encoder (MLP branch) | @sec-iqn |
-| $\phi_\phi(\tau)$ | Quantile encoder (cosine branch) | @sec-iqn |
-| $h_x \odot h_\tau$ | Hadamard (element-wise) product — multiplicative merge | @sec-iqn |
+| $\psi_\phi(x)$ | Covariate encoder (MLP branch), component of $G_\phi$ | @sec-iqn |
+| $\phi(\tau)$ | Quantile encoder (cosine branch), component of $G_\phi$ | @sec-iqn |
+| $h_x \odot h_\tau$ | Hadamard (element-wise) product ,  multiplicative merge | @sec-iqn |
 
 ## Bayesian Inference via GBC
 
 | Symbol | Meaning | Introduced |
-|--------|---------|-----------|
+|-----|------|--------|
 | $G^*(\tau, x)$ | Noise outsourcing map: $Y \stackrel{a.s.}{=} G^*(U, X)$ | @sec-noise-outsourcing |
 | $S(y)$ | Summary statistic of data | @sec-bayesian-inference |
 | $g(p) = \Phi(\lambda_1 \Phi^{-1}(p) + \lambda_0)$ | Wang distortion function | @sec-meu-wang |
@@ -54,7 +55,7 @@ We collect the main notation used throughout the book. Symbols are grouped by ca
 ## General Conventions
 
 | Convention | Meaning |
-|-----------|---------|
+|--------|------|
 | $\theta$, $\theta_1, \ldots, \theta_d$ | Parameters (scalar or vector) |
 | $x \in \mathcal{X} \subseteq \mathbb{R}^d$ | Covariates / input features |
 | $y$ | Response / observed data |
@@ -70,10 +71,36 @@ We collect the main notation used throughout the book. Symbols are grouped by ca
 ## Network and Training
 
 | Symbol | Meaning |
-|--------|---------|
+|-----|------|
 | $L$ | Network depth (number of layers) |
 | $W$ | Network width (maximum layer width) |
 | $\mathcal{G}(L, W)$ | ReLU network class with depth $L$, width $W$ |
 | $\beta$ | Holder smoothness exponent (in convergence theorems) |
 | $B$ | Mini-batch size |
 | $\eta$ | Learning rate |
+
+## Reinforcement Learning and Distributional RL
+
+*Note: $\pi$ denotes a policy in this section; elsewhere in the book it denotes a probability distribution or prior.*
+
+| Symbol | Meaning | Introduced |
+|-----|------|--------|
+| $\mathcal{X}$ | State space | @sec-dist-rl |
+| $\mathcal{A}$ | Action space | @sec-dist-rl |
+| $x \in \mathcal{X}$ | State (consistent with covariate notation) | @sec-dist-rl |
+| $a \in \mathcal{A}$ | Action | @sec-dist-rl |
+| $\pi(a \mid x)$ | Policy: distribution over actions given state | @sec-dist-rl |
+| $R$ | Reward random variable | @sec-dist-rl |
+| $\gamma \in [0,1)$ | Discount factor | @sec-dist-rl |
+| $Z$ | Random return: $Z = \sum_{t=0}^\infty \gamma^t R_t$ | @sec-dist-rl |
+| $\eta(x,a)$ | Return distribution at state-action pair $(x,a)$ | @sec-dist-rl |
+| $\mathcal{T}^\pi$ | Distributional Bellman operator | @sec-dist-rl |
+
+## Risk Measures
+
+| Symbol | Meaning | Introduced |
+|-----|------|--------|
+| $\text{VaR}_\alpha(X) = F_X^{-1}(\alpha)$ | Value-at-Risk at level $\alpha$ | @sec-dist-rl |
+| $\text{CVaR}_\alpha(X) = \frac{1}{1-\alpha}\int_\alpha^1 F_X^{-1}(\tau)\,d\tau$ | Conditional Value-at-Risk (Expected Shortfall) | @sec-dist-rl |
+| $g : [0,1] \to [0,1]$ | Distortion function, $g(0)=0$, $g(1)=1$ | @sec-meu-wang |
+| $\widetilde{V}(X) = \int_0^\infty g(S_X(u))\,du$ | Yaari dual functional | @sec-meu-yaari |

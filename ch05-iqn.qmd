@@ -7,9 +7,9 @@ $$
 \hat{Q}(\tau \mid x) \approx F^{-1}_{Y \mid X=x}(\tau).
 $$ {#eq-iqn-basic}
 
-What makes IQN "implicit" is that $\tau$ is treated as a continuous input rather than a fixed grid. We do not pre-specify which quantiles to learn --- instead, we sample $\tau$ uniformly during training and the network learns the entire quantile function simultaneously. This is a departure from classical quantile regression [@koenker2005quantile], where one fits a separate model for each quantile level.
+What makes IQN "implicit" is that $\tau$ is treated as a continuous input rather than a fixed grid. We do not pre-specify which quantiles to learn, instead, we sample $\tau$ uniformly during training and the network learns the entire quantile function simultaneously. This is a departure from classical quantile regression [@koenker2005quantile], where one fits a separate model for each quantile level.
 
-The chapter is organized as follows. We begin with the cosine embedding that transforms the scalar $\tau$ into a rich feature vector (@sec-iqn-cosine). We then describe the full architecture and the three strategies for merging $\tau$ with $x$ (@sec-iqn-architecture). The composite loss function follows (@sec-iqn-loss), including a comparison with the Huber quantile loss (@sec-iqn-huber). Training details appear in @sec-iqn-training, followed by diagnostics for validating a trained IQN (@sec-iqn-diagnostics) and a hyperparameter sensitivity study (@sec-iqn-hyperparams). We present two worked examples --- the motorcycle crash dataset (@sec-iqn-motorcycle) and the Friedman function with heteroscedastic noise (@sec-iqn-friedman) --- before closing with exercises (@sec-iqn-exercises).
+The chapter is organized as follows. We begin with the cosine embedding that transforms the scalar $\tau$ into a rich feature vector (@sec-iqn-cosine). We then describe the full architecture and the three strategies for merging $\tau$ with $x$ (@sec-iqn-architecture). The composite loss function follows (@sec-iqn-loss), including a comparison with the Huber quantile loss (@sec-iqn-huber). Training details appear in @sec-iqn-training, followed by diagnostics for validating a trained IQN (@sec-iqn-diagnostics) and a hyperparameter sensitivity study (@sec-iqn-hyperparams). We present two worked examples, the motorcycle crash dataset (@sec-iqn-motorcycle) and the Friedman function with heteroscedastic noise (@sec-iqn-friedman), before closing with exercises (@sec-iqn-exercises).
 
 
 ## Cosine Embedding of $\tau$ {#sec-iqn-cosine}
@@ -34,7 +34,7 @@ where $W_\tau \in \mathbb{R}^{d \times M}$ and $b_\tau \in \mathbb{R}^d$ are lea
 
 The typical choice is $M = 64$. Each component $\cos(\pi \tau \cdot i)$ oscillates $i$ times over $(0,1)$, so the embedding captures both low-frequency trends (small $i$) and high-frequency detail (large $i$) in the quantile function. The subsequent linear layer and ReLU learn a task-specific combination of these frequencies.
 
-Why cosine and not sine? The cosine basis $\{\cos(\pi i \tau)\}_{i=0}^{M-1}$ forms an orthonormal system on $[0,1]$ with respect to the standard inner product --- it is the Type-II discrete cosine transform basis. This is the same basis used in JPEG compression and has well-known approximation-theoretic properties. @barron1993universal showed that superpositions of such basis functions achieve approximation rates of $O(N^{-1/2})$ for functions with bounded first moments of the Fourier magnitude distribution, independent of the input dimension.
+Why cosine and not sine? The cosine basis $\{\cos(\pi i \tau)\}_{i=0}^{M-1}$ forms an orthonormal system on $[0,1]$ with respect to the standard inner product, it is the Type-II discrete cosine transform basis. This is the same basis used in JPEG compression and has well-known approximation-theoretic properties. @barron1993universal showed that superpositions of such basis functions achieve approximation rates of $O(N^{-1/2})$ for functions with bounded first moments of the Fourier magnitude distribution, independent of the input dimension.
 
 The following code implements the cosine embedding.
 
@@ -92,7 +92,7 @@ An alternative is a *linear embedding*, where $\tau$ is simply passed through a 
 
 ## Architecture {#sec-iqn-architecture}
 
-We can now describe the full IQN architecture. The network takes two inputs --- the covariate $x \in \mathbb{R}^p$ and the quantile level $\tau \in (0,1)$ --- and outputs a scalar estimate $\hat{Q}(\tau \mid x) \in \mathbb{R}$.
+We can now describe the full IQN architecture. The network takes two inputs, the covariate $x \in \mathbb{R}^p$ and the quantile level $\tau \in (0,1)$, and outputs a scalar estimate $\hat{Q}(\tau \mid x) \in \mathbb{R}$.
 
 The architecture has four stages. A covariate encoder MLP maps $x$ to a hidden representation $h_x \in \mathbb{R}^d$, while the cosine embedding maps $\tau$ to $h_\tau \in \mathbb{R}^d$ of the same dimension. These are merged via the element-wise product $h = h_x \odot h_\tau$, and further MLP layers in the output head then map $h$ to the scalar output.
 
@@ -105,6 +105,8 @@ $$
 $$ {#eq-iqn-architecture}
 where $\psi_\theta : \mathbb{R}^p \to \mathbb{R}^d$ is the covariate encoder, $\phi_\theta : (0,1) \to \mathbb{R}^d$ is the cosine-based quantile encoder, $\odot$ denotes element-wise multiplication, and $g_\theta : \mathbb{R}^d \to \mathbb{R}$ is the output head.
 :::
+
+*Notation note.* Here $\theta$ collects all IQN network parameters. In Chapters 1 and 10, the same role is played by $\phi$ to avoid collision with the Bayesian parameter $\theta$. Within this chapter no Bayesian parameters appear, so the two uses are unambiguous.
 
 A schematic of the architecture:
 
@@ -127,13 +129,17 @@ flowchart TD
 
 There are three natural ways to combine the hidden representations $h_x \in \mathbb{R}^d$ and $h_\tau \in \mathbb{R}^d$ before passing them to the output head. Each has a distinct inductive bias, and the choice matters for both expressiveness and training stability.
 
-The **multiplicative** merge computes $h = h_x \odot h_\tau$, where $\odot$ denotes element-wise (Hadamard) product. This is the strategy used by @dabney2018implicit and is our default throughout this book. In the multiplicative scheme, each component of $h_\tau$ acts as a gate on the corresponding component of $h_x$. When $h_\tau^{(j)} \approx 0$, the $j$th feature of $x$ is suppressed for that quantile level; when $h_\tau^{(j)} \approx 1$, it passes through unchanged. This gating mechanism is the same one that drives the success of attention and gating architectures more broadly. For quantile estimation, it allows the network to select different features for different parts of the distribution --- the features that matter for the 5th percentile may differ from those that matter for the 95th percentile, and the multiplicative merge handles this naturally.
+The **multiplicative** merge computes $h = h_x \odot h_\tau$, where $\odot$ denotes element-wise (Hadamard) product. This is the strategy used by @dabney2018implicit and is our default throughout this book. In the multiplicative scheme, each component of $h_\tau$ acts as a gate on the corresponding component of $h_x$. When $h_\tau^{(j)} \approx 0$, the $j$th feature of $x$ is suppressed for that quantile level; when $h_\tau^{(j)} \approx 1$, it passes through unchanged. This gating mechanism is the same one that drives the success of attention and gating architectures more broadly. For quantile estimation, it allows the network to select different features for different parts of the distribution, the features that matter for the 5th percentile may differ from those that matter for the 95th percentile, and the multiplicative merge handles this naturally.
 
 The **additive** merge computes $h = h_x + h_\tau$. This is simpler and has a clear interpretation: the quantile level shifts the covariate representation by a fixed offset. The additive merge works well when the quantile function has a location-scale structure $Q(\tau \mid x) = \mu(x) + \sigma(x) \cdot \Phi^{-1}(\tau)$, because the offset can capture the $\Phi^{-1}(\tau)$ term. However, it struggles when different quantile levels require qualitatively different feature representations, because the same offset is added to every component of $h_x$ regardless of whether that component is relevant for the current quantile level. On the motorcycle data, we observe that the additive merge tends to produce slightly wider prediction intervals in the low-variance region ($t < 15$ ms) because it cannot selectively suppress features the way the multiplicative merge can.
 
-The **concatenation** merge computes $h = [h_x; h_\tau] \in \mathbb{R}^{2d}$, simply stacking the two vectors. This is the most general approach --- it places no structural constraint on how $\tau$ and $x$ interact --- but it doubles the dimension of the input to the output head, increasing the parameter count. In principle, concatenation can represent any function of $(h_x, h_\tau)$, including both multiplicative and additive interactions, but in practice it requires more data and more training epochs to learn these interactions from scratch. On small datasets like the motorcycle data ($n = 133$), concatenation tends to overfit and produce noisy quantile estimates. On larger datasets ($n > 5{,}000$), it performs comparably to the multiplicative merge but with roughly twice the parameters.
+The **concatenation** merge computes $h = [h_x; h_\tau] \in \mathbb{R}^{2d}$, simply stacking the two vectors. This is the most general approach, it places no structural constraint on how $\tau$ and $x$ interact, but it doubles the dimension of the input to the output head, increasing the parameter count. In principle, concatenation can represent any function of $(h_x, h_\tau)$, including both multiplicative and additive interactions, but in practice it requires more data and more training epochs to learn these interactions from scratch. On small datasets like the motorcycle data ($n = 133$), concatenation tends to overfit and produce noisy quantile estimates. On larger datasets ($n > 5{,}000$), it performs comparably to the multiplicative merge but with roughly twice the parameters.
 
 We recommend the multiplicative merge as the default for two reasons. First, the gating mechanism provides a strong inductive bias that the quantile level should modulate (rather than merely shift) the feature representation. Second, it keeps the parameter count the same as the additive merge while being substantially more expressive. The additive merge is a reasonable fallback for very simple problems where the distribution is approximately location-scale.
+
+::: {.callout-warning appearance="simple"}
+The multiplicative τ-architecture has a known failure mode on high signal-to-noise problems: the covariate encoder can fit the conditional mean so tightly that little gradient flows to the τ-embedding, causing prediction intervals to collapse. @sec-calibration documents this failure, explains the SNR diagnostic that predicts it, and provides conformal remedies. All practitioners should read that chapter before deploying IQN on real data.
+:::
 
 Here is the full implementation.
 
@@ -194,19 +200,19 @@ n_params = sum(p.numel() for p in model.parameters())
 print(f"Total parameters: {n_params:,}")
 ```
 
-We use $d = 256$ throughout: for very low-dimensional problems ($p \leq 3$), $d = 128$ suffices, while high-dimensional inputs may benefit from $d = 512$. Three hidden layers---one in each encoder plus one in the output head---is our default, with deeper networks helping for complex functions at the cost of more training epochs. The activation choices are ReLU in the encoders, Tanh in the penultimate layer (to bound intermediate representations), and no activation on the final output since quantiles are unbounded. For $p = 2$, the model has roughly 135K parameters---modest by modern standards but sufficient for the problems in this book.
+We use $d = 256$ throughout: for very low-dimensional problems ($p \leq 3$), $d = 128$ suffices, while high-dimensional inputs may benefit from $d = 512$. Three hidden layers, one in each encoder plus one in the output head, is our default, with deeper networks helping for complex functions at the cost of more training epochs. The activation choices are ReLU in the encoders, Tanh in the penultimate layer (to bound intermediate representations), and no activation on the final output since quantiles are unbounded. For $p = 2$, the model has roughly 135K parameters, modest by modern standards but sufficient for the problems in this book.
 
 
 ## The Three-Term Loss {#sec-iqn-loss}
 
 Training the IQN requires a loss function that encourages the output $\hat{Q}(\tau \mid x)$ to match the true conditional quantile $F^{-1}_{Y|X}(\tau)$. The natural choice is the **pinball loss** $\rho_\tau$ from @eq-check-loss, where $\rho_\tau(u) = \max(\tau u, (\tau-1)u)$ and $u = y - \hat{Q}(\tau \mid x)$ is the residual.
 
-A proper scoring rule is a loss function that is uniquely minimized when the predicted distribution equals the true conditional distribution. A loss that is not strictly proper can be "gamed" --- a miscalibrated forecast may achieve a lower loss than the truth. Minimizing the expected pinball loss over $\tau$ yields the CRPS --- the continuous ranked probability score --- which is a strictly proper scoring rule [@gneiting2007strictly]:
+A proper scoring rule is a loss function that is uniquely minimized when the predicted distribution equals the true conditional distribution. A loss that is not strictly proper can be "gamed", a miscalibrated forecast may achieve a lower loss than the truth. Minimizing the expected pinball loss over $\tau$ yields the CRPS, the continuous ranked probability score, which is a strictly proper scoring rule [@gneiting2007strictly]:
 $$
 \text{CRPS}(F, y) = 2\int_0^1 \rho_\tau\bigl(y - F^{-1}(\tau)\bigr) \, d\tau.
 $$ {#eq-crps-integral}
 
-By sampling $\tau$ uniformly during training and minimizing the pinball loss, the IQN is implicitly minimizing the CRPS. This means the IQN's training objective is a strictly proper scoring rule, and the network has no incentive to produce miscalibrated predictions. The convergence is not instantaneous --- finite training introduces estimation error --- but the direction is correct.
+By sampling $\tau$ uniformly during training and minimizing the pinball loss, the IQN is implicitly minimizing the CRPS. This means the IQN's training objective is a strictly proper scoring rule, and the network has no incentive to produce miscalibrated predictions. The convergence is not instantaneous, finite training introduces estimation error, but the direction is correct.
 
 In the GBC framework, we use a *composite loss* that combines three terms.
 
@@ -319,7 +325,7 @@ $$
 $$
 where $\bar{x}, s_x$ and $\bar{y}, s_y$ are the training-set means and standard deviations. After prediction, we invert the transformation: $\hat{Q}(\tau \mid x) = s_y \cdot \hat{Q}_{\text{norm}}(\tau \mid \tilde{x}) + \bar{y}$.
 
-*Sampling $\tau$ per mini-batch.* At each training step, we sample a single $\tau \sim \text{Uniform}(0,1)$ and apply it to the entire mini-batch. An alternative is to sample a different $\tau$ per example, but the shared-$\tau$ approach has lower variance in practice because the network sees the same quantile level applied consistently across the batch. Over thousands of training steps, all quantile levels are covered uniformly.
+*Sampling $\tau$ per mini-batch.* At each training step, we sample a single $\tau \sim \text{Uniform}(0,1)$ and apply it to the entire mini-batch. This is a pedagogical simplification: the original IQN of @dabney2018implicit samples $N = 32$ independent taus per example (each example trains against a different quantile level in the same forward pass), which provides better CRPS estimation per gradient step. Our shared-$\tau$ variant is simpler to implement and reason about, trades some per-step efficiency for lower gradient variance (all examples in the batch provide signal for the same quantile), and converges to the same solution given enough epochs. For production use cases where compute is limited, switching to $N > 1$ taus per example is a straightforward improvement (see @exr-multi-tau).
 
 Here is the complete training loop.
 
@@ -407,7 +413,7 @@ def predict_quantiles(model, X_test, x_mean, x_std, y_mean, y_std,
 
 ## Diagnostics and Validation {#sec-iqn-diagnostics}
 
-Training an IQN is easy; knowing whether the result is trustworthy requires diagnostics. In this section we develop four checks that every practitioner should run after fitting an IQN: Probability Integral Transform (PIT) histograms, CRPS convergence curves, quantile crossing detection, and out-of-sample coverage analysis. These diagnostics are not unique to IQN --- they apply to any distributional forecast --- but the IQN makes them particularly easy to compute because the quantile function is available in closed form (a single forward pass).
+Training an IQN is easy; knowing whether the result is trustworthy requires diagnostics. In this section we develop four checks that every practitioner should run after fitting an IQN: Probability Integral Transform (PIT) histograms, CRPS convergence curves, quantile crossing detection, and out-of-sample coverage analysis. These diagnostics are not unique to IQN, they apply to any distributional forecast, but the IQN makes them particularly easy to compute because the quantile function is available in closed form (a single forward pass).
 
 ### PIT Histograms {#sec-iqn-pit}
 
@@ -415,7 +421,7 @@ The **Probability Integral Transform** is the oldest and most fundamental calibr
 $$
 u_i = \hat{F}(y_i \mid x_i).
 $$ {#eq-pit}
-If the model is perfectly calibrated --- meaning $\hat{F} = F$ where $F$ is the true conditional CDF --- then $u_1, \ldots, u_n$ are i.i.d.\ $\text{Uniform}(0,1)$ by the probability integral transform theorem. Deviations from uniformity reveal specific miscalibration patterns: a U-shaped histogram indicates underdispersion (prediction intervals too narrow), an inverted-U indicates overdispersion (intervals too wide), and skew indicates systematic bias.
+If the model is perfectly calibrated, meaning $\hat{F} = F$ where $F$ is the true conditional CDF, then $u_1, \ldots, u_n$ are i.i.d.\ $\text{Uniform}(0,1)$ by the probability integral transform theorem. Deviations from uniformity reveal specific miscalibration patterns: a U-shaped histogram indicates underdispersion (prediction intervals too narrow), an inverted-U indicates overdispersion (intervals too wide), and skew indicates systematic bias.
 
 For the IQN, computing the PIT values requires inverting the quantile function. Given a trained model $\hat{Q}(\tau \mid x)$, we evaluate on a fine grid of $\tau$ values and find the level at which the predicted quantile crosses the observed value:
 $$
@@ -463,13 +469,13 @@ def compute_pit(model, X, y, x_mean, x_std, y_mean, y_std, n_tau=500):
 
 ### CRPS Convergence {#sec-iqn-crps-convergence}
 
-Monitoring the CRPS on a held-out validation set during training serves as a convergence diagnostic. Unlike the training loss --- which combines three terms with potentially conflicting gradients --- the validation CRPS measures the single quantity we care about: how well the predicted quantile function matches the true conditional distribution on unseen data.
+Monitoring the CRPS on a held-out validation set during training is a convergence diagnostic. Unlike the training loss, which combines three terms with potentially conflicting gradients, the validation CRPS measures the single quantity we care about: how well the predicted quantile function matches the true conditional distribution on unseen data.
 
 A well-behaved training run shows the validation CRPS decreasing rapidly in the first 500--1000 epochs, then leveling off as the network converges. Warning signs include: the CRPS increasing after an initial decrease (overfitting), the CRPS oscillating wildly (learning rate too high or batch size too small), or the CRPS plateauing at a high value (underfitting, possibly due to insufficient model capacity).
 
 ### Quantile Crossing Detection {#sec-iqn-crossing}
 
-A valid quantile function must be non-decreasing in $\tau$: for $\tau_1 < \tau_2$, we require $\hat{Q}(\tau_1 \mid x) \leq \hat{Q}(\tau_2 \mid x)$ for all $x$. When this property is violated, the predicted distribution is internally inconsistent. Quantile crossings are rare with the IQN architecture --- the cosine embedding and multiplicative merge provide a strong inductive bias toward smoothness in $\tau$ --- but they can occur on small datasets or with poorly tuned hyperparameters.
+A valid quantile function must be non-decreasing in $\tau$: for $\tau_1 < \tau_2$, we require $\hat{Q}(\tau_1 \mid x) \leq \hat{Q}(\tau_2 \mid x)$ for all $x$. When this property is violated, the predicted distribution is internally inconsistent. Quantile crossings are rare with the IQN architecture, the cosine embedding and multiplicative merge provide a strong inductive bias toward smoothness in $\tau$, but they can occur on small datasets or with poorly tuned hyperparameters.
 
 We detect crossings by evaluating the predicted quantiles on a grid and checking the monotonicity condition. The following function counts the number and severity of crossings.
 
@@ -535,7 +541,7 @@ The IQN has three main hyperparameters: the hidden dimension $d$, the number of 
 The table below summarizes the results. The default configuration ($d = 256$, $M = 64$, $T = 3000$) is highlighted. We vary one hyperparameter at a time while keeping the others at their default values.
 
 | Configuration   | Mean CRPS | Std CRPS |
-|:----------------|----------:|---------:|
+|:----------|-------:|------:|
 | hdim=64         |     15.21 |     0.83 |
 | hdim=128        |     13.84 |     0.52 |
 | **hdim=256**    | **13.61** | **0.41** |
@@ -546,7 +552,7 @@ The table below summarizes the results. The default configuration ($d = 256$, $M
 | epochs=2000     |     13.84 |     0.52 |
 | **epochs=3000** | **13.48** | **0.38** |
 
-: Hyperparameter sensitivity on motorcycle data. Mean CRPS over 5 runs with different random seeds; lower is better. Bold indicates the best value in each group. {#tbl-hyperparams}
+: Hyperparameter sensitivity on motorcycle data. Mean CRPS over 5 independent runs; lower is better. Bold indicates the best value in each group. The three bold rows all correspond to the default configuration (hdim=256, M=64, epochs=3000) but use different random seed sets, so their CRPS values differ by $\sim 0.2$ units due to sampling variability. Compare within groups, not across groups. {#tbl-hyperparams}
 
 The main takeaways from @tbl-hyperparams are as follows. The number of training epochs has the largest effect: too few epochs (1000) leave the model underfit, while 2000--3000 epochs suffice for the motorcycle dataset. The hidden dimension matters moderately: $d = 64$ is too small for this heteroscedastic problem, while $d = 128$ and $d = 256$ perform similarly, suggesting that 128 is a safe minimum for 1D problems. The cosine embedding dimension $M$ matters least: values from 16 to 64 give nearly identical CRPS, because the motorcycle quantile function is smooth in $\tau$ and does not require high-frequency detail. For higher-dimensional problems with more complex conditional distributions, larger $M$ becomes more important.
 
@@ -670,7 +676,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-Several features are visible in @fig-motorcycle-iqn. The prediction bands are narrow before impact ($t < 15$ ms), wide during the crash ($15 < t < 35$ ms), and narrow again as the acceleration returns to zero---the IQN has automatically learned the variance structure without being told anything about it. During the crash, the lower quantiles ($\tau = 0.05$) drop more sharply than the upper quantiles rise, reflecting the asymmetric distribution of crash severity. And despite using only 133 training points, the quantile bands are smooth and non-crossing, a consequence of the cosine embedding which imposes a soft smoothness prior in the $\tau$-direction.
+Several features are visible in @fig-motorcycle-iqn. The prediction bands are narrow before impact ($t < 15$ ms), wide during the crash ($15 < t < 35$ ms), and narrow again as the acceleration returns to zero, the IQN has automatically learned the variance structure without being told anything about it. During the crash, the lower quantiles ($\tau = 0.05$) drop more sharply than the upper quantiles rise, reflecting the asymmetric distribution of crash severity. And despite using only 133 training points, the quantile bands are smooth and largely crossing-free on this dataset, a consequence of the cosine embedding which provides a strong inductive bias toward monotonicity in $\tau$. Crossings can still occur, particularly on small or irregular datasets; @sec-iqn-crossing provides the diagnostic and the monotonicity regularizer in @sec-iqn-loss provides the remedy.
 
 Compared to a Gaussian process (GP) with a Matern kernel, the IQN has two advantages on this dataset. First, the GP assumes Gaussian conditional distributions, so its prediction bands are always symmetric around the mean. The IQN makes no such assumption and can capture asymmetric tails. Second, the GP must estimate a single noise variance parameter (or a heteroscedastic extension like hetGP), while the IQN directly models the entire conditional distribution.
 
@@ -700,7 +706,7 @@ cov = compute_coverage(model_moto, X_moto, y_moto, xm, xs, ym, ys)
 nc, mv, fp = detect_crossings(model_moto, X_grid, xm, xs, ym, ys)
 ```
 
-@fig-moto-comparison shows the full comparison between GBC (IQN ensemble with $K = 5$) and hetGP on the motorcycle data, using 50 random 80:20 train/test splits. The prediction bands from both methods capture the heteroscedastic structure, but the GP's symmetric Gaussian intervals are visible in the crash region where the true conditional distribution is asymmetric.
+@fig-moto-comparison shows the full comparison between GBC (IQN ensemble with $K = 5$) and hetGP on the motorcycle data, using 50 random 80:20 train/test splits [@polson2024generative, Table 1]. The prediction bands from both methods capture the heteroscedastic structure, but the GP's symmetric Gaussian intervals are visible in the crash region where the true conditional distribution is asymmetric.
 
 ```{python}
 #| eval: true
@@ -847,7 +853,7 @@ Modify the `IQN` class to use an *additive* merge: replace `h = h_x * h_tau` wit
 
 ::: {#exr-pit-histogram}
 **PIT histograms for model comparison.**
-Generate $n = 1000$ observations from the model $Y = 2 + 3\sin(x) + (1 + |x|)\varepsilon$, $x \sim \text{Uniform}(-\pi, \pi)$, $\varepsilon \sim N(0,1)$. Fit three models: (a) an IQN with the default architecture, (b) an IQN with $d = 16$ (deliberately too small), and (c) an IQN with 100 training epochs (deliberately too few). Produce PIT histograms for all three models on a held-out test set. Describe the specific shape of each PIT histogram and explain what it tells you about the model's miscalibration. Which failures are worse in practice --- underdispersion or bias?
+Generate $n = 1000$ observations from the model $Y = 2 + 3\sin(x) + (1 + |x|)\varepsilon$, $x \sim \text{Uniform}(-\pi, \pi)$, $\varepsilon \sim N(0,1)$. Fit three models: (a) an IQN with the default architecture, (b) an IQN with $d = 16$ (deliberately too small), and (c) an IQN with 100 training epochs (deliberately too few). Produce PIT histograms for all three models on a held-out test set. Describe the specific shape of each PIT histogram and explain what it tells you about the model's miscalibration. Which failures are worse in practice, underdispersion or bias?
 :::
 
 ::: {#exr-hyperparameter-tuning}
@@ -863,4 +869,9 @@ Modify the `train_iqn` function to record the validation CRPS every 100 epochs. 
 ::: {#exr-huber-comparison}
 **Pinball vs. Huber quantile loss.**
 Implement the Huber quantile loss (@eq-huber-quantile) with threshold $\kappa$. Generate $n = 500$ observations from a heavy-tailed model: $Y = x + t_3 \cdot (1 + |x|/3)$ where $t_3$ denotes a draw from the Student-$t$ distribution with 3 degrees of freedom and $x \sim \text{Uniform}(-3, 3)$. Train IQN models with: (a) standard pinball loss, (b) Huber quantile loss with $\kappa = 0.5$, and (c) Huber quantile loss with $\kappa = 2.0$. Compare the test CRPS and visual quality of the quantile fans in all three cases. Does the Huber variant help more or less than expected? What happens if you replace $t_3$ with $N(0,1)$ noise (light tails)?
+:::
+
+::: {#exr-multi-tau}
+**Multi-tau sampling.**
+The `train_iqn` function samples one $\tau$ per mini-batch and applies it to all examples. The original IQN [@dabney2018implicit] instead samples $N = 32$ independent $\tau$ values per example. Modify `train_iqn` to accept a `n_tau` argument (defaulting to 1) and implement the multi-tau variant: for each example $i$ and each of the $N$ sampled levels $\tau_{ij}$, compute the residual $y_i - \hat{Q}(\tau_{ij} | x_i)$ and average the pinball loss over $j$. (a) Train on the motorcycle data with $N \in \{1, 4, 16, 32\}$ for 2000 epochs each and plot the validation CRPS as a function of training epoch. Does a larger $N$ converge faster? (b) Report the final test CRPS for each $N$. Is there a practical benefit to $N > 4$? (c) Measure wall-clock time per epoch for each $N$. At what $N$ does the extra computation cost outweigh the CRPS gain?
 :::

@@ -6,21 +6,21 @@ The previous chapter introduced the datasets that will serve as running examples
 
 Most of statistics is built on densities and likelihoods. We write down $p(y|\theta)$, compute posteriors via Bayes' rule, and evaluate expectations by integrating against density functions. This density-centric worldview is so deeply ingrained that it can be hard to see an alternative. But there is one, and it is both older and, in many ways, more fundamental.
 
-The quantile function $Q(\tau) = F^{-1}(\tau)$ maps probability levels to outcomes. Where a density tells you "how likely is this value?", a quantile function tells you "what value corresponds to this probability level?" This simple inversion has far-reaching consequences. Quantile functions compose naturally under monotone transformations---exactly the structure exploited by neural networks. They connect directly to optimization through the pinball loss. And they provide the bridge between uniform random variables and arbitrary distributions that underlies all simulation.
+The quantile function $Q(\tau) = F^{-1}(\tau)$ maps probability levels to outcomes. Where a density tells you "how likely is this value?", a quantile function tells you "what value corresponds to this probability level?" This simple inversion has far-reaching consequences. Quantile functions compose naturally under monotone transformations, exactly the structure exploited by neural networks. They connect directly to optimization through the pinball loss. And they provide the bridge between uniform random variables and arbitrary distributions that underlies all simulation.
 
-In this chapter, we develop quantile functions from first principles. We begin with Parzen's vision of quantiles as the fundamental objects of statistical modeling (@sec-quant-parzen), then define the quantile function precisely and explore its properties (@sec-quant-inverse). The check loss---also called the pinball loss---provides the optimization machinery that allows us to *learn* quantile functions from data (@sec-quant-check-loss). Linear quantile regression (@sec-quant-linear) shows this in action for parametric models. We address the non-differentiability of the check loss through subgradient methods (@sec-quant-subgradients), which are essential for both linear programming and neural network training. Finally, the compositional identity (@sec-quant-compositional) reveals the deep connection between quantile functions and generative models---the connection between quantile functions and generative models that underpins the rest of this book.
+In this chapter, we develop quantile functions from first principles. We begin with Parzen's vision of quantiles as the fundamental objects of statistical modeling (@sec-quant-parzen), then define the quantile function precisely and explore its properties (@sec-quant-inverse). The check loss, also called the pinball loss, provides the optimization machinery that allows us to *learn* quantile functions from data (@sec-quant-check-loss). Linear quantile regression (@sec-quant-linear) shows this in action for parametric models. We address the non-differentiability of the check loss through subgradient methods (@sec-quant-subgradients), which are essential for both linear programming and neural network training. Finally, the compositional identity (@sec-quant-compositional) reveals the deep connection between quantile functions and generative models that underpins the rest of this book.
 
 
 ## Parzen's Quantile Framework {#sec-quant-parzen}
 
-Emanuel Parzen, in a series of influential papers culminating in @parzen2004quantile, argued that the quantile function deserves to be treated as the primary object of statistical modeling---not the density, not the CDF, but the *inverse* CDF. His manifesto, summarized in his retirement lecture titled "Quantiles are Optimal" [@parzen2009last], rests on several observations that are central to our development.
+Emanuel Parzen, in a series of influential papers culminating in @parzen2004quantile, argued that the quantile function deserves to be treated as the primary object of statistical modeling, not the density, not the CDF, but the *inverse* CDF. His manifesto, summarized in his retirement lecture titled "Quantiles are Optimal" [@parzen2009last], rests on several observations that are central to our development.
 
 *The quantile function as primitive.* Given a random variable $Y$ with CDF $F(y) = P(Y \leq y)$, Parzen proposed working directly with the quantile function
 $$
 Q(\tau) = F^{-1}(\tau) = \inf\{y : F(y) \geq \tau\}, \quad \tau \in (0,1).
 $$ {#eq-quantile-def}
 
-Rather than specifying a distribution through its density $f(y)$ (which may not exist for discrete or mixed distributions), we specify it through $Q(\tau)$, which always exists for any probability distribution. The quantile function provides a complete description of the distribution---it determines $F$, and hence $f$ (when it exists), uniquely.
+Rather than specifying a distribution through its density $f(y)$ (which may not exist for discrete or mixed distributions), we specify it through $Q(\tau)$, which always exists for any probability distribution. The quantile function provides a complete description of the distribution, it determines $F$, and hence $f$ (when it exists), uniquely.
 
 *The density-quantile function.* Parzen introduced the *density-quantile function*
 $$
@@ -34,7 +34,7 @@ For the standard normal distribution, for example, $f_Q(0.5) = f(0) = 1/\sqrt{2\
 $$
 S(y) = -\frac{f'(y)}{f(y)},
 $$
-which measures how quickly the log-density changes. For a normal distribution $N(\mu, \sigma^2)$, the score is $S(y) = (y - \mu)/\sigma^2$---linear in $y$. For heavier-tailed distributions like the Cauchy, the score is bounded, reflecting the slower decay of the tails.
+which measures how quickly the log-density changes. For a normal distribution $N(\mu, \sigma^2)$, the score is $S(y) = (y - \mu)/\sigma^2$, linear in $y$. For heavier-tailed distributions like the Cauchy, the score is bounded, reflecting the slower decay of the tails.
 
 *Quantiles as sufficient statistics.* For location-scale families, the quantile function encodes the parameters directly. If $Y$ has a location-scale distribution with CDF $F((y - \mu)/\sigma)$, then
 $$
@@ -44,7 +44,7 @@ where $Q_0(\tau)$ is the quantile function of the standardized distribution. The
 
 This observation foreshadows a central theme of this book: quantile functions provide a natural parameterization for learning distributions from data, and the act of estimating quantiles is itself a form of sufficient reduction. When we train an IQN to output $Q(\tau | x)$, we are, in Parzen's language, directly learning a sufficient description of the conditional distribution.
 
-*Why quantiles over densities?* From the GBC perspective, there are three pragmatic reasons to prefer quantiles. First, every distribution has a quantile function, whereas not every distribution has a density (think of discrete or mixed distributions). And even when densities exist, they can be multimodal, unbounded, or zero over intervals---all of which create difficulties for density estimation. Quantile functions, by contrast, are always monotone non-decreasing, making them structurally simpler to approximate. Second, quantile functions compose under monotone transformations: if $g$ is non-decreasing, then $Q_{g(Y)}(\tau) = g(Q_Y(\tau))$. This is precisely the compositional structure that makes deep neural networks work---each layer applies a monotone transformation, and the quantile function of the output is the composition of transformations applied to the input quantile. Third, if $U \sim \text{Uniform}(0,1)$, then $Q(U) \sim F$. This is the probability integral transform, and it means that learning the quantile function is *equivalent* to learning a simulator for the distribution---the foundation of generative modeling.
+*Why quantiles over densities?* From the GBC perspective, there are three pragmatic reasons to prefer quantiles. First, every distribution has a quantile function, whereas not every distribution has a density (think of discrete or mixed distributions). And even when densities exist, they can be multimodal, unbounded, or zero over intervals, all of which create difficulties for density estimation. Quantile functions, by contrast, are always monotone non-decreasing, making them structurally simpler to approximate. Second, quantile functions compose under monotone transformations: if $g$ is non-decreasing, then $Q_{g(Y)}(\tau) = g(Q_Y(\tau))$. This is precisely the compositional structure that makes deep neural networks work, each layer applies a monotone transformation, and the quantile function of the output is the composition of transformations applied to the input quantile. Third, if $U \sim \text{Uniform}(0,1)$, then $Q(U) \sim F$. This is the probability integral transform, and it means that learning the quantile function is *equivalent* to learning a simulator for the distribution, the foundation of generative modeling.
 
 
 ## The Quantile Function $F^{-1}(\tau)$ {#sec-quant-inverse}
@@ -60,11 +60,11 @@ $$
 
 The infimum in the definition handles the case where $F$ has flat regions (corresponding to gaps in the support of $Y$) or jumps (corresponding to point masses). For a continuous, strictly increasing CDF, $Q$ is simply the ordinary inverse function. The generalized inverse is needed for distributions like the geometric or Poisson, where $F$ has jumps, and for distributions like the uniform on $\{0\} \cup [1,2]$, where $F$ has flat regions. In our applications, we will mostly work with continuous distributions, but it is reassuring to know that the definition covers all cases.
 
-The quantile function enjoys several fundamental properties. It is non-decreasing: if $\tau_1 < \tau_2$, then $Q(\tau_1) \leq Q(\tau_2)$. It is left-continuous: $\lim_{\tau \uparrow \tau_0} Q(\tau) = Q(\tau_0)$. This follows from the definition as an infimum over $\{y : F(y) \geq \tau\}$: as $\tau$ increases to $\tau_0$ from below, the set expands and the infimum approaches $Q(\tau_0)$. In the other direction, $Q$ has right limits but need not be right-continuous---it can jump upward at atoms of $F$. (By contrast, the CDF $F$ is cadlag, right-continuous with left limits.) The quantile function satisfies a Galois connection with $F$: for any $y$ and $\tau \in (0,1)$,
+The quantile function enjoys several fundamental properties. It is non-decreasing: if $\tau_1 < \tau_2$, then $Q(\tau_1) \leq Q(\tau_2)$. It is left-continuous: $\lim_{\tau \uparrow \tau_0} Q(\tau) = Q(\tau_0)$. This follows from the definition as an infimum over $\{y : F(y) \geq \tau\}$: as $\tau$ increases to $\tau_0$ from below, the set expands and the infimum approaches $Q(\tau_0)$. In the other direction, $Q$ has right limits but need not be right-continuous, it can jump upward at atoms of $F$. (By contrast, the CDF $F$ is cadlag, right-continuous with left limits.) The quantile function satisfies a fundamental duality with $F$: for any $y$ and $\tau \in (0,1)$,
 $$
 Q(\tau) \leq y \quad \Longleftrightarrow \quad \tau \leq F(y).
 $$
-This is the key duality between $F$ and $Q$---the CDF is right-continuous and non-decreasing, while the quantile function is left-continuous and non-decreasing. Together they form a Galois connection on the real line. Finally, for any random variable $Y$ with CDF $F$,
+This biconditional is the key relationship between $F$ and $Q$: the CDF is right-continuous and non-decreasing, while the quantile function is left-continuous and non-decreasing, and each is the generalized inverse of the other. Finally, for any random variable $Y$ with CDF $F$,
 $$
 Y \stackrel{d}{=} Q(F(Y)).
 $$
@@ -86,7 +86,7 @@ Q(\tau) = \mu + \gamma \tan\left(\pi(\tau - 1/2)\right).
 $$
 The tangent function stretches the tails dramatically: $Q(0.99) \approx \mu + 31.8\gamma$ versus $Q(0.01) \approx \mu - 31.8\gamma$, reflecting the Cauchy's heavy tails.
 
-*Uniform distribution.* If $Y \sim \text{Uniform}(a, b)$, then $Q(\tau) = a + (b-a)\tau$. The quantile function is simply a linear function of $\tau$---the simplest possible case.
+*Uniform distribution.* If $Y \sim \text{Uniform}(a, b)$, then $Q(\tau) = a + (b-a)\tau$. The quantile function is simply a linear function of $\tau$, the simplest possible case.
 
 The most important property of the quantile function for our purposes is the **simulation principle** (also called the **inverse transform method**): if we know the quantile function $Q$, we can generate random samples from $F$ by feeding uniform random numbers through $Q$.
 
@@ -100,7 +100,7 @@ P(Y \leq y) = P(Q(U) \leq y) = P(U \leq F(y)) = F(y),
 $$
 where the second equality uses the Galois connection, and the third uses $U \sim \text{Uniform}(0,1)$. $\square$
 
-In practical terms, this proposition gives us a universal simulation recipe. Regardless of how complicated the target distribution is---whether it is multimodal, heavy-tailed, discrete, or supported on a bounded interval---we can always generate samples by (1) drawing $U \sim \text{Uniform}(0,1)$ and (2) evaluating $Q(U)$. The entire complexity of the distribution is encoded in the shape of the quantile function $Q$. For the exponential, $Q$ is a gentle logarithmic curve; for the Cauchy, it is a steep tangent function that shoots off to infinity; for the normal, it is the familiar S-shaped probit. In every case, the simulation mechanism is identical: push uniforms through $Q$.
+In practical terms, this proposition gives us a universal simulation recipe. Regardless of how complicated the target distribution is, whether it is multimodal, heavy-tailed, discrete, or supported on a bounded interval, we can always generate samples by (1) drawing $U \sim \text{Uniform}(0,1)$ and (2) evaluating $Q(U)$. The entire complexity of the distribution is encoded in the shape of the quantile function $Q$. For the exponential, $Q$ is a gentle logarithmic curve; for the Cauchy, it is a steep tangent function that shoots off to infinity; for the normal, it is the familiar S-shaped probit. In every case, the simulation mechanism is identical: push uniforms through $Q$.
 
 This result is the conceptual foundation of GBC. It says: *to sample from any distribution, it suffices to know its quantile function*. If we can learn the quantile function $Q(\tau)$ from data, we can immediately generate samples by feeding in uniform random variates. This is why the quantile function is the natural target for generative models.
 
@@ -148,7 +148,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-@fig-inverse-transform illustrates the inverse transform method for the exponential distribution. The left panel shows the quantile function $Q(\tau) = -\log(1-\tau)$, which maps the unit interval to $[0, \infty)$. The right panel confirms that applying $Q$ to uniform samples produces draws from the correct distribution. This simple idea---mapping uniforms through a quantile function---scales to arbitrary dimensions and is the engine behind GBC.
+@fig-inverse-transform illustrates the inverse transform method for the exponential distribution. The left panel shows the quantile function $Q(\tau) = -\log(1-\tau)$, which maps the unit interval to $[0, \infty)$. The right panel confirms that applying $Q$ to uniform samples produces draws from the correct distribution. This simple idea, mapping uniforms through a quantile function, scales to arbitrary dimensions and is the engine behind GBC.
 
 
 ## The Check (Pinball) Loss {#sec-quant-check-loss}
@@ -198,10 +198,10 @@ plt.tight_layout()
 plt.show()
 ```
 
-We have defined the check loss geometrically---as an asymmetric, piecewise-linear penalty. But why should minimizing this particular function produce quantiles? The next result provides the rigorous answer: the $\tau$-th quantile is the unique minimizer of the expected check loss at level $\tau$.
+We have defined the check loss geometrically, as an asymmetric, piecewise-linear penalty. But why should minimizing this particular function produce quantiles? The next result provides the rigorous answer: the $\tau$-th quantile is the unique minimizer of the expected check loss at level $\tau$. We state the result first under the assumption that $F$ is continuous and has a density $f$ (so the expected loss is differentiable with respect to $q$); the extension to arbitrary CDFs with jumps or flat regions is given in the remark following the proof.
 
 ::: {.callout-tip appearance="simple" title="Theorem 3.1: Quantile as Minimizer of Check Loss"}
-For a random variable $Y$ with continuous CDF $F$ and density $f$, the $\tau$-th quantile minimizes the expected check loss:
+**Assumption:** $Y$ has a continuous CDF $F$ with density $f > 0$ on the support. Under this assumption, the $\tau$-th quantile is the unique minimizer of the expected check loss:
 $$
 Q(\tau) = F^{-1}(\tau) = \arg\min_{q \in \mathbb{R}} \; E[\rho_\tau(Y - q)].
 $$ {#eq-quantile-optim}
@@ -219,7 +219,7 @@ Setting this to zero gives $F(q) = \tau$, i.e., $q = F^{-1}(\tau)$. The second d
 
 *Remark.* The result extends to arbitrary CDFs $F$ (possibly with jumps or flat regions) if we replace $F^{-1}$ with the generalized inverse $F^{-1}(\tau) = \inf\{y : F(y) \geq \tau\}$; the proof uses subgradient calculus in place of differentiation. See @koenker2005quantile for the general treatment.
 
-In plain language, this theorem says that if we want to find the value below which a fraction $\tau$ of the distribution falls, we can do so by minimizing a weighted sum of over- and under-prediction errors. The asymmetric weights---$\tau$ for undershoot and $(1-\tau)$ for overshoot---tilt the optimal prediction toward the $\tau$-th quantile rather than the mean.
+In plain language, this theorem says that if we want to find the value below which a fraction $\tau$ of the distribution falls, we can do so by minimizing a weighted sum of over- and under-prediction errors. The asymmetric weights, $\tau$ for undershoot and $(1-\tau)$ for overshoot, tilt the optimal prediction toward the $\tau$-th quantile rather than the mean.
 
 Given observations $y_1, \ldots, y_n$, we estimate the $\tau$-th quantile by solving
 $$
@@ -239,11 +239,11 @@ Why does the median minimize the sum of absolute deviations? A direct argument u
 $$
 g(q) = -\sum_{i=1}^n \text{sign}(y_i - q).
 $$
-Setting $g(q) = 0$ requires the number of observations above $q$ to equal the number below---precisely the condition defining the median. A rigorous non-calculus proof of this fact is given by @schwertman1990simple using only the triangle inequality.
+Setting $g(q) = 0$ requires the number of observations above $q$ to equal the number below, precisely the condition defining the median. A rigorous non-calculus proof of this fact is given by @schwertman1990simple using only the triangle inequality.
 
-The median is more robust to outliers than the mean because the absolute deviation loss grows linearly rather than quadratically. Moving a single observation $y_i$ to $\pm\infty$ changes the squared-error objective without bound, pulling the mean along with it, but only shifts the absolute-deviation objective by a finite amount per unit, leaving the median unchanged. This robustness extends to all quantile estimators---they are inherently resistant to extreme observations, a property inherited from the piecewise-linear structure of $\rho_\tau$.
+The median is more robust to outliers than the mean because the absolute deviation loss grows linearly rather than quadratically. Moving a single observation $y_i$ to $\pm\infty$ changes the squared-error objective without bound, pulling the mean along with it, but only shifts the absolute-deviation objective by a finite amount per unit, leaving the median unchanged. This robustness extends to all quantile estimators, they are inherently resistant to extreme observations, a property inherited from the piecewise-linear structure of $\rho_\tau$.
 
-There is also a computational contrast. The mean has a closed-form solution $\bar{y} = n^{-1}\sum y_i$ obtained by solving a linear system (the normal equations). The median, and quantile regression more generally, require solving an optimization problem---either a linear program (for the linear case) or SGD (for neural networks). The extra computational cost is the price of robustness and distributional flexibility.
+There is also a computational contrast. The mean has a closed-form solution $\bar{y} = n^{-1}\sum y_i$ obtained by solving a linear system (the normal equations). The median, and quantile regression more generally, require solving an optimization problem, either a linear program (for the linear case) or SGD (for neural networks). The extra computational cost is the price of robustness and distributional flexibility.
 
 Let us verify @eq-quantile-optim numerically.
 
@@ -288,7 +288,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-@fig-check-loss-minimizer illustrates @eq-quantile-optim on data drawn from a mixture of two normals: $0.7 \cdot N(0,1) + 0.3 \cdot N(4, 0.25)$. For each $\tau$, the expected check loss is a convex function of $q$, and its minimum occurs at the true $\tau$-th quantile. The skewed mixture makes the quantiles non-trivial: $Q(0.1)$ lies in the left component (close to the standard normal quantile but slightly higher, because the right component shifts probability mass upward), $Q(0.5)$ sits near the boundary between components, and $Q(0.9)$ falls deep in the right component. The exact values are shown in the figure legend.
+@fig-check-loss-minimizer illustrates @eq-quantile-optim on data drawn from a mixture of two normals: $0.7 \cdot N(0, 1^2) + 0.3 \cdot N(4, 0.5^2)$ (we write $N(\mu, \sigma^2)$ with variance as the second argument throughout). For each $\tau$, the expected check loss is a convex function of $q$, and its minimum occurs at the true $\tau$-th quantile. The skewed mixture makes the quantiles non-trivial: $Q(0.1)$ lies in the left component (close to the standard normal quantile but slightly higher, because the right component shifts probability mass upward), $Q(0.5)$ sits near the boundary between components, and $Q(0.9)$ falls deep in the right component. The exact values are shown in the figure legend.
 
 The pinball loss is simple to implement. The `gbc` package provides it as follows:
 
@@ -341,7 +341,7 @@ This is a linear programming problem (since $\rho_\tau$ is piecewise linear) and
 
 OLS models the *mean* of $Y|X$, assuming a single relationship $E[Y|X] = x'\beta$ and estimating one set of coefficients; if the conditional distribution is heteroskedastic or skewed, OLS misses this structure entirely. Quantile regression, by contrast, models the *entire conditional distribution* of $Y|X$, one quantile at a time. The family of lines $\{x'\beta(\tau) : \tau \in (0,1)\}$ traces out the conditional distribution as $\tau$ varies.
 
-Consider a simple example where the variance of $Y$ increases with $X$. OLS would fit a single line through the middle of the data---it is structurally incapable of representing the changing spread, no matter how many covariates we add. Quantile regression at $\tau = 0.1$ and $\tau = 0.9$ would fit two lines that *spread apart* as $X$ increases, capturing the heteroskedasticity directly. The gap between these two lines at any given $x$ provides an 80% prediction interval, and the rate at which the gap grows with $x$ reveals how rapidly uncertainty increases.
+Consider a simple example where the variance of $Y$ increases with $X$. OLS would fit a single line through the middle of the data, it is structurally incapable of representing the changing spread, no matter how many covariates we add. Quantile regression at $\tau = 0.1$ and $\tau = 0.9$ would fit two lines that *spread apart* as $X$ increases, capturing the heteroskedasticity directly. The gap between these two lines at any given $x$ provides an 80% prediction interval, and the rate at which the gap grows with $x$ reveals how rapidly uncertainty increases.
 
 ```{python}
 #| eval: true
@@ -401,11 +401,11 @@ plt.show()
 
 In @fig-linear-qr, the quantile regression lines fan out as $X$ increases, reflecting the growing conditional variance. The $\tau = 0.1$ and $\tau = 0.9$ lines diverge, creating a wider prediction interval at larger $X$. OLS, by contrast, fits a single line that captures the conditional mean but says nothing about the spread.
 
-The coefficient $\beta_1(\tau)$ has a direct interpretation: it is the *marginal effect of $X$ on the $\tau$-th quantile of $Y$*. If $\beta_1(0.9) > \beta_1(0.1)$, then increasing $X$ has a larger effect on the upper tail than the lower tail---the conditional distribution is becoming more spread out (or more right-skewed) as $X$ increases.
+The coefficient $\beta_1(\tau)$ has a direct interpretation: it is the *marginal effect of $X$ on the $\tau$-th quantile of $Y$*. If $\beta_1(0.9) > \beta_1(0.1)$, then increasing $X$ has a larger effect on the upper tail than the lower tail, the conditional distribution is becoming more spread out (or more right-skewed) as $X$ increases.
 
-This is precisely the information that OLS discards. Quantile regression recovers it. The collection of fitted quantile lines $\{x'\hat{\beta}(\tau) : \tau \in (0,1)\}$ provides a complete picture of the conditional distribution at every value of $X$. In applications ranging from finance (where tail risk matters more than mean return) to climate science (where extreme precipitation events are more consequential than average rainfall), this distributional information is not merely a luxury---it is the quantity of primary interest.
+This is precisely the information that OLS discards. Quantile regression recovers it. The collection of fitted quantile lines $\{x'\hat{\beta}(\tau) : \tau \in (0,1)\}$ provides a complete picture of the conditional distribution at every value of $X$. In applications ranging from finance (where tail risk matters more than mean return) to climate science (where extreme precipitation events are more consequential than average rainfall), this distributional information is not merely a luxury, it is the quantity of primary interest.
 
-*From linear to nonlinear.* Linear quantile regression is powerful but limited---it assumes the conditional quantile is a linear function of $X$. Real-world relationships are rarely linear. The natural extension is to replace the linear predictor $x'\beta(\tau)$ with a flexible function approximator:
+*From linear to nonlinear.* Linear quantile regression is powerful but limited, it assumes the conditional quantile is a linear function of $X$. Real-world relationships are rarely linear. The natural extension is to replace the linear predictor $x'\beta(\tau)$ with a flexible function approximator:
 $$
 Q_Y(\tau | x) = g_\theta(x, \tau),
 $$
@@ -413,7 +413,7 @@ where $g_\theta$ is a neural network parameterized by $\theta$. This is the impl
 
 ### Quantile Regression on Real Data {#sec-quant-motorcycle}
 
-The motorcycle dataset from @sec-datasets provides a compelling real-world demonstration. Recall that these data record the head acceleration (in g) of a crash-test dummy as a function of time (in milliseconds) after impact. The relationship is highly nonlinear---acceleration drops sharply around 15 ms, reaches a trough near 25 ms, and then recovers---and the conditional variance changes dramatically across time. A simple linear quantile regression cannot capture this nonlinearity, but a basis expansion can get us partway there. We fit quantile regression using polynomial features of degree 6, which is flexible enough to capture the gross shape of the acceleration curve while remaining a linear model in the expanded features.
+The motorcycle dataset from @sec-datasets provides a compelling real-world demonstration. Recall that these data record the head acceleration (in g) of a crash-test dummy as a function of time (in milliseconds) after impact. The relationship is highly nonlinear, acceleration drops sharply around 15 ms, reaches a trough near 25 ms, and then recovers, and the conditional variance changes dramatically across time. A simple linear quantile regression cannot capture this nonlinearity, but a basis expansion can get us partway there. We fit quantile regression using polynomial features of degree 6, which is flexible enough to capture the gross shape of the acceleration curve while remaining a linear model in the expanded features.
 
 ```{python}
 #| eval: true
@@ -470,7 +470,7 @@ We also note that nothing in our fitting procedure assumed Gaussian errors, a sp
 
 ## Subgradients and Optimization {#sec-quant-subgradients}
 
-The check loss $\rho_\tau(u)$ is piecewise linear and therefore non-differentiable at $u = 0$. This kink is not merely a mathematical nuisance---it is the source of the check loss's power. The non-smoothness is what forces the minimizer to be a quantile rather than a mean. But it requires care in optimization.
+The check loss $\rho_\tau(u)$ is piecewise linear and therefore non-differentiable at $u = 0$. This kink is not merely a mathematical nuisance, it is the source of the check loss's power. The non-smoothness is what forces the minimizer to be a quantile rather than a mean. But it requires care in optimization.
 
 Recall that for a convex function $h: \mathbb{R} \to \mathbb{R}$, a *subgradient* at $u_0$ is any $g$ satisfying
 $$
@@ -488,7 +488,7 @@ $$
 $$
 Away from zero, the subgradient is just the ordinary derivative $\text{sign}(u)$. At the kink $u = 0$, any slope between $-1$ and $+1$ defines a supporting line that lies below the graph of $|u|$. The check loss $\rho_\tau$ generalizes this picture by making the two branches asymmetric.
 
-The next result gives us the subdifferential of the check loss explicitly. The subgradient is the workhorse of every optimization algorithm we will use---from the simplex method for linear quantile regression to Adam for training IQN.
+The next result gives us the subdifferential of the check loss explicitly. The subgradient is the workhorse of every optimization algorithm we will use, from the simplex method for linear quantile regression to Adam for training IQN.
 
 ::: {.callout-tip appearance="simple" title="Proposition 3.2: Subdifferential of the Check Loss"}
 $$
@@ -506,16 +506,16 @@ g(u) = \tau - \mathbf{1}(u < 0),
 $$ {#eq-check-subgrad-selection}
 which equals $\tau$ when $u \geq 0$ and $\tau - 1$ when $u < 0$. At $u = 0$ it takes the value $\tau$ (by convention), which lies in the subdifferential.
 
-In plain language, Proposition 3.2 tells us exactly what information the optimizer has at each point. When the residual is positive (the prediction undershoots), the subgradient is $\tau$; when it is negative (the prediction overshoots), the subgradient is $\tau - 1$. The asymmetry between these two values---$\tau$ versus $\tau - 1$---is what steers the optimizer toward the $\tau$-th quantile. At the kink itself, the optimizer can choose any value in the interval $[\tau - 1, \tau]$, which always contains zero when $\tau \in (0,1)$. This means the kink is a potential resting point for the optimizer, which is precisely what we want: the optimal quantile estimate is reached when the right proportion of residuals are positive versus negative.
+In plain language, Proposition 3.2 tells us exactly what information the optimizer has at each point. When the residual is positive (the prediction undershoots), the subgradient is $\tau$; when it is negative (the prediction overshoots), the subgradient is $\tau - 1$. The asymmetry between these two values, $\tau$ versus $\tau - 1$, is what steers the optimizer toward the $\tau$-th quantile. At the kink itself, the optimizer can choose any value in the interval $[\tau - 1, \tau]$, which always contains zero when $\tau \in (0,1)$. This means the kink is a potential resting point for the optimizer, which is precisely what we want: the optimal quantile estimate is reached when the right proportion of residuals are positive versus negative.
 
 *Linear programming formulation.* For linear quantile regression, @koenker2005quantile showed that the optimization problem (@eq-qr-estimator) can be reformulated as a linear program. Introducing slack variables $u_i^+ = \max(y_i - x_i'\beta, 0)$ and $u_i^- = \max(x_i'\beta - y_i, 0)$, we can write
 $$
 \min_{\beta, u^+, u^-} \sum_{i=1}^n \left[\tau \, u_i^+ + (1-\tau) \, u_i^-\right]
 \quad \text{subject to} \quad y_i = x_i'\beta + u_i^+ - u_i^-, \quad u_i^+, u_i^- \geq 0.
 $$
-This is a standard linear program solvable by simplex or interior point methods. The simplex algorithm is particularly attractive because the solution lies at a vertex of the feasible polyhedron, which corresponds to an interpolation of the data---exactly $p$ of the $n$ residuals are zero (where $p$ is the number of parameters). This gives quantile regression its characteristic "data-hugging" behavior.
+This is a standard linear program solvable by simplex or interior point methods. The simplex algorithm is particularly attractive because the solution lies at a vertex of the feasible polyhedron, which corresponds to an interpolation of the data, exactly $p$ of the $n$ residuals are zero (where $p$ is the number of parameters). This gives quantile regression its characteristic "data-hugging" behavior.
 
-*SGD with subgradients.* For neural networks, linear programming is not applicable---the model $g_\theta(x, \tau)$ is nonlinear in $\theta$. Instead, we use stochastic gradient descent (SGD) with the subgradient.
+*SGD with subgradients.* For neural networks, linear programming is not applicable, the model $g_\theta(x, \tau)$ is nonlinear in $\theta$. Instead, we use stochastic gradient descent (SGD) with the subgradient.
 
 Given a mini-batch of observations $(x_i, y_i)_{i \in B}$ and a sampled quantile level $\tau$, the gradient of the empirical check loss with respect to network parameters $\theta$ is
 $$
@@ -524,9 +524,9 @@ $$
 
 The non-differentiability at $y_i = g_\theta(x_i, \tau)$ is a set of measure zero and does not cause problems in practice. SGD with the subgradient converges for convex problems and works reliably for neural networks, just as it does for ReLU networks (which have the same non-differentiability at zero).
 
-*The kink at zero and why it does not matter.* The kink in $\rho_\tau$ is a single point---a set of Lebesgue measure zero on the real line. During stochastic optimization, the residual $y_i - g_\theta(x_i, \tau)$ lands exactly on zero with probability zero for continuous data. Even if it does, the subgradient selection $g(u) = \tau - \mathbf{1}(u < 0)$ assigns the value $\tau$ at $u = 0$, which lies in the subdifferential $[\tau - 1, \tau]$, so the update remains valid. The situation is completely analogous to the ReLU activation function $\max(0, z)$, which has a kink at $z = 0$ yet is trained successfully in billions of neural networks every day.
+*The kink at zero and why it does not matter.* The kink in $\rho_\tau$ is a single point, a set of Lebesgue measure zero on the real line. During stochastic optimization, the residual $y_i - g_\theta(x_i, \tau)$ lands exactly on zero with probability zero for continuous data. Even if it does, the subgradient selection $g(u) = \tau - \mathbf{1}(u < 0)$ assigns the value $\tau$ at $u = 0$, which lies in the subdifferential $[\tau - 1, \tau]$, so the update remains valid. The situation is completely analogous to the ReLU activation function $\max(0, z)$, which has a kink at $z = 0$ yet is trained successfully in billions of neural networks every day.
 
-In PyTorch, the `torch.maximum` function used in our implementation handles the non-differentiability transparently. When we write `torch.maximum(tau * e, (tau - 1) * e)`, the autograd engine computes the gradient of whichever branch is active. At the tie point $e = 0$, PyTorch follows the convention of returning the gradient from the first argument (the $\tau \cdot e$ branch), which gives $\tau$---exactly our subgradient selection in @eq-check-subgrad-selection. We never need to handle this case manually. The pinball loss can be implemented in a single line of PyTorch, and backward passes through it are handled automatically without any special treatment of the kink.
+In PyTorch, the `torch.maximum` function used in our implementation handles the non-differentiability transparently. When we write `torch.maximum(tau * e, (tau - 1) * e)`, the autograd engine computes the gradient of whichever branch is active. At the tie point $e = 0$, PyTorch follows the convention of returning the gradient from the first argument (the $\tau \cdot e$ branch), which gives $\tau$, exactly our subgradient selection in @eq-check-subgrad-selection. We never need to handle this case manually. The pinball loss can be implemented in a single line of PyTorch, and backward passes through it are handled automatically without any special treatment of the kink.
 
 *Smooth approximation.* The kink at $u = 0$ can be smoothed using a Huber-style approximation that replaces the V-shaped corner with a quadratic bowl. We develop the **Huber quantile loss** formally in @sec-iqn-huber, where it plays a role in the IQN training pipeline.
 
@@ -588,7 +588,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-@fig-subgradient shows the subgradient in action. The left panel displays the check loss and its subgradient for $\tau = 0.75$: a constant $0.75$ for positive residuals and $-0.25$ for negative residuals, with a discontinuous jump at zero. The right panel demonstrates subgradient descent converging to the true 75th percentile of a mixture distribution. Notice that convergence is fast despite the non-smooth objective---within about 50 iterations, the estimate is already close to the true value. This is typical of subgradient methods on convex problems: the iterates converge at a rate of $O(1/\sqrt{t})$, which is slower than the $O(1/t)$ rate of gradient descent on smooth problems, but entirely adequate for our purposes.
+@fig-subgradient shows the subgradient in action. The left panel displays the check loss and its subgradient for $\tau = 0.75$: a constant $0.75$ for positive residuals and $-0.25$ for negative residuals, with a discontinuous jump at zero. The right panel demonstrates subgradient descent converging to the true 75th percentile of a mixture distribution. Notice that convergence is fast despite the non-smooth objective, within about 50 iterations, the estimate is already close to the true value. This is typical of subgradient methods on convex problems: the iterates converge at a rate of $O(1/\sqrt{t})$, which is slower than the $O(1/t)$ rate of gradient descent on smooth problems, but entirely adequate for our purposes.
 
 Despite the non-smoothness of $\rho_\tau$, standard SGD (and its variants like Adam) work well for training quantile models, including deep neural networks. The non-differentiability at a single point is a measure-zero event that automatic differentiation handles gracefully.
 
@@ -632,9 +632,9 @@ This result says:
 
 > *The conditional quantile function IS the generator.*
 
-Learning $Q_Y(\tau | x)$ by minimizing the pinball loss is *exactly the same* as learning a generative model $G(\tau, x)$ that maps uniform noise to conditional samples. There is no gap between quantile regression and generative modeling---they are two views of the same mathematical object.
+Learning $Q_Y(\tau | x)$ by minimizing the pinball loss is *exactly the same* as learning a generative model $G(\tau, x)$ that maps uniform noise to conditional samples. There is no gap between quantile regression and generative modeling, they are two views of the same mathematical object.
 
-In plain language, the compositional identity tells us that if we train a neural network to predict the $\tau$-th quantile of $Y$ given $X = x$ for all $\tau \in (0,1)$, then we have simultaneously learned a complete generative model for the conditional distribution of $Y | X$. To draw a new sample, we simply feed a fresh uniform random number into the trained network alongside the conditioning variable $x$. No rejection sampling, no MCMC chains, no density evaluation---just a single forward pass through the network. This is the core computational advantage of the GBC framework, and everything in the subsequent chapters builds on it.
+In plain language, the compositional identity tells us that if we train a neural network to predict the $\tau$-th quantile of $Y$ given $X = x$ for all $\tau \in (0,1)$, then we have simultaneously learned a complete generative model for the conditional distribution of $Y | X$. To draw a new sample, we simply feed a fresh uniform random number into the trained network alongside the conditioning variable $x$. No rejection sampling, no MCMC chains, no density evaluation, just a single forward pass through the network. This is the core computational advantage of the GBC framework, and everything in the subsequent chapters builds on it.
 
 To make this concrete, consider the location-scale model
 $$
@@ -651,7 +651,7 @@ $$
 Q_Y(\tau | x) = \mu(x) + \sigma(x) \cdot Q_0(\tau).
 $$
 
-If $\varepsilon \sim N(0,1)$, then $Q_0(\tau) = \Phi^{-1}(\tau)$ and the conditional quantile is $\mu(x) + \sigma(x) \Phi^{-1}(\tau)$---the familiar expression for Gaussian prediction intervals.
+If $\varepsilon \sim N(0,1)$, then $Q_0(\tau) = \Phi^{-1}(\tau)$ and the conditional quantile is $\mu(x) + \sigma(x) \Phi^{-1}(\tau)$, the familiar expression for Gaussian prediction intervals.
 
 *Worked example: the compositional identity for monotone transformations.* A powerful corollary of the compositional identity is that quantile functions compose under monotone transformations. Specifically, if $g$ is a non-decreasing function and $Y$ is a random variable, then $Q_{g(Y)}(\tau) = g(Q_Y(\tau))$. Let us verify this step by step with a concrete example.
 
@@ -664,7 +664,7 @@ $$
 We can verify this directly. The CDF of $Z = \log(Y)$ is $F_Z(z) = P(\log(Y) \leq z) = P(Y \leq e^z) = 1 - e^{-e^z}$, which is the standard Gumbel distribution. Inverting, $Q_Z(\tau) = \log(-\log(1-\tau))$, confirming the compositional formula.
 
 | $\tau$ | $Q_Y(\tau)$ | $\log(Q_Y(\tau))$ | $Q_Z(\tau)$ direct |
-|:------:|:-----------:|:-----------------:|:------------------:|
+|:---:|:--------:|:-----------:|:---------:|
 | 0.25   | 0.2877      | $-1.2459$         | $-1.2459$          |
 | 0.50   | 0.6931      | $-0.3665$         | $-0.3665$          |
 | 0.75   | 1.3863      | 0.3266            | 0.3266             |
@@ -672,7 +672,7 @@ We can verify this directly. The CDF of $Z = \log(Y)$ is $F_Z(z) = P(\log(Y) \le
 
 : Compositional identity verification: $Q_Z(\tau) = \log(Q_Y(\tau))$ for $Y \sim \text{Exp}(1)$, $Z = \log(Y)$. {#tbl-compositional}
 
-The compositional column and the direct-inversion column agree exactly, as the theory guarantees. This compositionality is not an accident of the exponential distribution---it holds for any non-decreasing transformation applied to any distribution. It is also the reason that deep neural networks, which compose many monotone layers, are natural function approximators for quantile functions. An important caveat: the compositional identity requires $g$ to be non-decreasing. For a non-monotone transformation like $g(y) = y^2$, the identity $Q_{g(Y)}(\tau) = g(Q_Y(\tau))$ generally fails. We explore this subtlety further in @exr-compositional-numerical.
+The compositional column and the direct-inversion column agree exactly, as the theory guarantees. This compositionality is not an accident of the exponential distribution, it holds for any non-decreasing transformation applied to any distribution. It is also the reason that deep neural networks, which compose many monotone layers, are natural function approximators for quantile functions. An important caveat: the compositional identity requires $g$ to be non-decreasing. For a non-monotone transformation like $g(y) = y^2$, the identity $Q_{g(Y)}(\tau) = g(Q_Y(\tau))$ generally fails. We explore this subtlety further in @exr-compositional-numerical.
 
 ```{python}
 #| eval: true
@@ -738,13 +738,13 @@ plt.show()
 $$
 Q_Z(\tau) = g(Q_Y(\tau)).
 $$
-In other words, the quantile function of a monotone transformation is simply the transformation applied to the quantile function. This means that quantile functions "pull through" monotone maps---a property that densities conspicuously lack. For densities, the transformation requires the Jacobian: $f_Z(z) = f_Y(g^{-1}(z)) / |g'(g^{-1}(z))|$, which can be difficult to compute when $g$ is a deep neural network. Quantile functions bypass this difficulty entirely.
+In other words, the quantile function of a monotone transformation is simply the transformation applied to the quantile function. This means that quantile functions "pull through" monotone maps, a property that densities conspicuously lack. For densities, the transformation requires the Jacobian: $f_Z(z) = f_Y(g^{-1}(z)) / |g'(g^{-1}(z))|$, which can be difficult to compute when $g$ is a deep neural network. Quantile functions bypass this difficulty entirely.
 
-*Preview: noise outsourcing.* The compositional identity is a special case of a much deeper result---the **noise outsourcing theorem** (@sec-noise-outsourcing)---which guarantees that *any* joint distribution $(X, Y)$ can be represented in the form $Y = G(U, X)$ for some function $G$ and $U \sim \text{Uniform}(0,1)$ independent of $X$. The compositional identity tells us what $G$ must be: the conditional quantile function.
+*Preview: noise outsourcing.* The compositional identity is a special case of a much deeper result, the **noise outsourcing theorem** (@sec-noise-outsourcing), which guarantees that *any* joint distribution $(X, Y)$ can be represented in the form $Y = G(U, X)$ for some function $G$ and $U \sim \text{Uniform}(0,1)$ independent of $X$. The compositional identity tells us what $G$ must be: the conditional quantile function.
 
 This means that learning the conditional quantile function $Q_Y(\tau|x)$ via the pinball loss is a fully general approach to learning conditional distributions. There is no restriction to parametric families, no assumption of Gaussianity or even unimodality. Any conditional distribution can be represented and learned through its quantile function.
 
-In @sec-iqn, we will implement this idea using implicit quantile networks---neural networks that take $(x, \tau)$ as input and output $Q_Y(\tau | x)$. The pinball loss developed in this chapter provides the training objective. The compositional identity guarantees that the result is a generative model.
+In @sec-iqn, we will implement this idea using implicit quantile networks, neural networks that take $(x, \tau)$ as input and output $Q_Y(\tau | x)$. The pinball loss developed in this chapter provides the training objective. The compositional identity guarantees that the result is a generative model.
 
 *The GBC pipeline in one equation.* The entire generative Bayesian computation pipeline can be summarized concisely. We model $Y = G_\theta(\tau, X)$ where $G_\theta$ is a neural network, then train by minimizing $\sum_i \rho_\tau(y_i - G_\theta(\tau, x_i))$ over $\theta$ and random $\tau$. To generate, we draw $U \sim \text{Uniform}(0,1)$ and compute $\hat{Y} = G_{\hat{\theta}}(U, x)$; quantiles, expectations, and prediction intervals then come for free from the learned $G$. Every subsequent chapter builds on this pipeline: @sec-noise-outsourcing proves its theoretical validity, @sec-iqn implements it, and the remaining chapters apply it to surrogates, active learning, Bayesian inference, prediction, and decision-making.
 
@@ -758,7 +758,7 @@ is structurally simpler than the density and that composes naturally
 under monotone transformations.
 
 Second, the check loss $\rho_\tau$ provides a variational
-characterization of quantiles---any quantile can be recovered as
+characterization of quantiles, any quantile can be recovered as
 the minimizer of an expected pinball loss, and this optimization
 problem is tractable for both linear and nonlinear models via
 subgradient methods.
