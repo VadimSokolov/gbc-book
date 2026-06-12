@@ -650,31 +650,7 @@ display(Image("cache/fig-lake-forecast.png"))
 
 The comparison is not fully symmetric. GPBC is *refit daily* with observations through each forecast date, while our neural network is trained *once* on pre-validation data and never sees validation-period observations. This gives GPBC a substantial information advantage, particularly at short horizons where recent observations are highly predictive.
 
-Despite this disadvantage, the neural network achieves lower RMSE at every horizon. This suggests that the MLP's flexible nonlinear mapping from the 6 input features more than compensates for the loss of recent observations. The GLM ensemble mean $\mu_{\text{GLM}}$ and the lagged temperature covariate $\phi$ already carry substantial predictive signal that the MLP exploits more effectively than the GP surrogate's kernel-based interpolation.
-
-### Matched comparison: periodic refitting {#sec-cal-lake-refit}
-
-To address the information asymmetry directly, we add a *periodic-refit* GBC variant that retrains the het-MLP ensemble at the start of each calendar month during the validation period, using all observations accumulated through that refit date. This mirrors the spirit of GPBC's daily refitting but at lower computational cost. The refit ensemble is then used for all forecasts until the next refit. The conformal calibration step is re-run at each refit using out-of-fold residuals from the updated training set.
-
-@tbl-cal-lake-refit compares the three methods across all 30 forecast horizons.
-
-```{python}
-#| eval: false
-#| label: tbl-cal-lake-refit
-#| tbl-cap: "Matched comparison: GBC-static (trained once), GBC-refit (monthly retraining), and GPBC (daily refit from Holthuijzen et al.). RMSE (°C) and 90% PI coverage averaged over horizons 1–30. GBC-refit addresses the information asymmetry; GBC-static results are for reference. Bold indicates best per metric."
-import pandas as pd, numpy as np
-from IPython.display import display
-
-df = pd.read_csv("cache/lake_refit_results.csv")
-agg = (df.groupby("method")[["rmse","cov90"]]
-         .mean()
-         .reindex(["GBC-static","GBC-refit","GPBC-daily"])
-         .reset_index())
-agg.columns = ["Method", "Mean RMSE (°C)", "Mean Cov90"]
-display(agg.to_markdown(index=False, floatfmt=".3f"))
-```
-
-Two conclusions follow from the matched comparison. First, GBC-static already outperforms GPBC-daily on both RMSE and coverage, confirming that the static model's flexible feature mapping more than offsets the loss of recent observations. Second, GBC-refit achieves further RMSE reduction at short horizons, where recent observations carry the most predictive signal, at the cost of monthly retraining overhead (approximately 22 minutes per refit on a single A100). The operational choice depends on whether that overhead is acceptable: for systems requiring real-time deployment with no retraining infrastructure, GBC-static is the better option; for batch forecasting systems where monthly retraining is practical, GBC-refit captures the remaining information advantage.
+Despite this disadvantage, the neural network achieves lower RMSE at every horizon. This suggests that the MLP's flexible nonlinear mapping from the 6 input features more than compensates for the loss of recent observations. The GLM ensemble mean $\mu_{\text{GLM}}$ and the lagged temperature covariate $\phi$ already carry substantial predictive signal that the MLP exploits more effectively than the GP surrogate's kernel-based interpolation. A matched variant that periodically refits the ensemble during the validation period would close the asymmetry entirely, but the handicapped comparison is the more demanding test, and the static model already passes it.
 
 From a Bayesian perspective, the comparison illustrates a tension between prior information and data. GPBC uses a GP prior, which encodes a smoothness assumption and provides a principled mechanism for uncertainty quantification. But the GP's kernel structure (typically separable, with a limited number of hyperparameters) constrains the class of functions it can represent. The neural network has no explicit prior, its inductive bias comes from the architecture and training procedure, but its functional flexibility allows it to learn complex interactions that the GP cannot represent. On this benchmark, flexibility wins over prior structure, and the conformal post-processing provides the uncertainty quantification that the neural network's architecture alone cannot deliver.
 
